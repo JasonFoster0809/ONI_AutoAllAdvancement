@@ -1,0 +1,16 @@
+bin/
+obj/
+*.dll
+
+oni_state.json
+oni_commands.json
+oni_results.json
+oni_catalog.json
+blueprint.json
+*.sav
+*.save
+
+*.key
+*.pem
+*.pfx
+*.snk
