@@ -667,6 +667,11 @@ namespace OniAgent
                 return ExecuteCancelAction(action, result);
             }
 
+            if (action.Type == "set_priority")
+            {
+                return ExecuteSetPriorityAction(action, result);
+            }
+
             if (action.Type != "dig")
             {
                 result.Reason = "unsupported";
@@ -814,6 +819,79 @@ namespace OniAgent
             {
                 Debug.LogWarning("[OniAgent] Could not execute cancel action: " + e);
                 result.Reason = "error";
+                return result;
+            }
+        }
+
+        private static AgentActionResult ExecuteSetPriorityAction(AgentAction action, AgentActionResult result)
+        {
+            try
+            {
+                if (!action.Priority.HasValue ||
+                    action.Priority.Value < 1 || action.Priority.Value > 9)
+                {
+                    result.Reason = "invalid_priority";
+                    return result;
+                }
+
+                if (!action.X.HasValue || !action.Y.HasValue)
+                {
+                    result.Reason = "out_of_bounds";
+                    return result;
+                }
+
+                var world = ClusterManager.Instance.activeWorld;
+                if (world == null)
+                {
+                    result.Reason = "out_of_bounds";
+                    return result;
+                }
+
+                int x = action.X.Value;
+                int y = action.Y.Value;
+                var offset = world.WorldOffset;
+                if (x < offset.x || y < offset.y ||
+                    x >= offset.x + world.Width || y >= offset.y + world.Height)
+                {
+                    result.Reason = "out_of_bounds";
+                    return result;
+                }
+
+                int cell = Grid.XYToCell(x, y);
+                if (!Grid.IsValidCell(cell) || !Grid.IsValidCellInWorld(cell, world.id))
+                {
+                    result.Reason = "out_of_bounds";
+                    return result;
+                }
+
+                for (int layer = 0; layer < 45; layer++)
+                {
+                    var gameObject = Grid.Objects[cell, layer];
+                    if (gameObject == null)
+                    {
+                        continue;
+                    }
+
+                    var prioritizable = gameObject.GetComponent<Prioritizable>();
+                    if (prioritizable == null || !prioritizable.IsPrioritizable())
+                    {
+                        continue;
+                    }
+
+                    prioritizable.SetMasterPriority(new PrioritySetting(
+                        PriorityScreen.PriorityClass.basic, action.Priority.Value));
+                    result.Ok = true;
+                    result.Reason = "ok";
+                    return result;
+                }
+
+                result.Reason = "nothing_found";
+                return result;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not execute set_priority action: " + e);
+                result.Reason = "nothing_found";
                 return result;
             }
         }

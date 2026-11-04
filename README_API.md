@@ -172,3 +172,26 @@ Command shape: `{"type":"cancel","x":12,"y":34}`. Results use
 `ok`/`nothing_to_cancel`/`out_of_bounds`/`error`; successful results also
 include `"cancelled":"dig"` or `"cancelled":"build"`. Missing coordinates and
 unexpected API errors return `error`.
+
+## Set priority API
+
+`Prioritizable.GetMasterPriority()` and `SetMasterPriority(PrioritySetting)`
+are public methods in `Prioritizable.cs` (lines 125-140).
+`Prioritizable.IsPrioritizable()` (line 182) confirms that the component is
+currently registered for prioritization. The game's `AttackTool.OnDragTool`
+(`AttackTool.cs`, lines 25-35) changes a target's priority through
+`SetMasterPriority(ToolMenu.Instance.PriorityScreen.GetLastSelectedPriority())`.
+
+`PrioritySetting` (`PrioritySetting.cs`, line 78) has a constructor accepting
+`PriorityScreen.PriorityClass` and an integer priority value.
+`PriorityScreen.InstantiateButtons()` (`PriorityScreen.cs`, lines 53-61)
+creates the standard `basic` priority buttons numbered 1 through 9. The
+action uses `new PrioritySetting(PriorityScreen.PriorityClass.basic, value)`.
+The code locates prioritizable objects in the specified active-world cell via
+the verified `Grid.Objects[cell, layer]` indexer, considering layers `0..44`
+as in the game's `CancelTool.OnDragTool`.
+
+Command shape: `{"type":"set_priority","x":12,"y":34,"priority":8}`.
+Results use `ok`, `nothing_found`, `invalid_priority`, or `out_of_bounds`.
+Unexpected exceptions are logged and reported as `nothing_found`, the closest
+failure reason available in the requested result set.
