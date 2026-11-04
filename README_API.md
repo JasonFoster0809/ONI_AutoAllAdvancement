@@ -125,3 +125,50 @@ orientation determine the footprint around that pivot.
   `already_marked`, `not_solid`, `undiggable`, `world_unavailable`,
   `dig_tool_unavailable`, `dig_tool_tiles_filter_disabled`, or
   `game_state_error`.
+
+## Cancel API
+
+The cancel action uses the game's `GameHashes.Cancel` event. ILSpy
+decompilation of `GameHashes.cs` confirms it is `2127324410`. `CancelTool.cs`,
+`OnDragTool(int, int)` (lines 38-48), loops over `Grid.Objects[cell, i]` for
+layers `0` through `44` and triggers this event on objects accepted by the
+cancel-tool filter. `Grid.ObjectLayerIndexer` in `Grid.cs` exposes the
+`GameObject this[int cell, int layer]` indexer.
+
+- Dig orders: `DigPlacerConfig.CreatePrefab()` (`DigPlacerConfig.cs`, lines
+  15-24) attaches `Diggable` and `CancellableDig`. The player menu callback
+  `Diggable.OnCancel()` (`Diggable.cs`, lines 553-560) triggers
+  `GameHashes.Cancel`. `CancellableDig.OnCancel(object)` and
+  `OnAnimationDone(string)` (`CancellableDig.cs`, lines 6-37) play the
+  cancellation animation and delete the dig order when that animation
+  completes. `Diggable.GetDiggable(int)` (`Diggable.cs`, lines 409-417) looks
+  up the order through `Grid.Objects[cell, 7]`.
+- Construction orders: `Constructable.OnSpawn()` (`Constructable.cs`, line
+  342) subscribes to the same event. Its user-menu callback
+  `OnPressCancel()` (`Constructable.cs`, lines 856-859) triggers it, and
+  `Constructable.OnCancel(object)` (lines 861-865) clears material needs and
+  pending uproots. `BuildingLoader.CreateBuildingUnderConstruction()`
+  (`BuildingLoader.cs`, lines 157-174) adds the generic `Cancellable`
+  component when the definition is cancellable; `Cancellable.OnCancel(object)`
+  (`Cancellable.cs`, lines 14-18) deletes the order.
+- Materials: `Storage` subscribes to queued destruction
+  (`Storage.cs`, line 287). Its `OnQueueDestroyObject(object)` and
+  `DropAll(...)` (`Storage.cs`, lines 1332-1340 and 739-783) drop stored
+  construction materials into the world when the construction order is
+  deleted; they are not returned directly to inventory.
+- Cell lookup: `Grid.Objects` is the verified `Grid.ObjectLayerIndexer`
+  field/indexer. The lookup scans the cell's object layers using the same
+  `0..44` range used by the game's `CancelTool`, then checks for a
+  `Constructable` component. `Diggable.GetDiggable(int)` is used first for a
+  dig order. Active-world bounds are checked using the already documented
+  `WorldContainer` and `Grid` APIs.
+
+The action only triggers the game's cancellation event on the main thread.
+For dig orders, the event starts a cancellation animation; a successful result
+means the cancellation event was handled, not that the animation has already
+finished.
+
+Command shape: `{"type":"cancel","x":12,"y":34}`. Results use
+`ok`/`nothing_to_cancel`/`out_of_bounds`/`error`; successful results also
+include `"cancelled":"dig"` or `"cancelled":"build"`. Missing coordinates and
+unexpected API errors return `error`.

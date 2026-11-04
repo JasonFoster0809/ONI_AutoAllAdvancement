@@ -591,6 +591,10 @@ namespace OniAgent
                     {
                         AppendNumberProperty(sb, ref hasResultProperty, "y", result.Y.Value);
                     }
+                    if (!string.IsNullOrEmpty(result.Cancelled))
+                    {
+                        AppendStringProperty(sb, ref hasResultProperty, "cancelled", result.Cancelled);
+                    }
                     AppendPropertyPrefix(sb, ref hasResultProperty, "ok");
                     sb.Append(result.Ok ? "true" : "false");
                     AppendStringProperty(sb, ref hasResultProperty, "reason", result.Reason);
@@ -656,6 +660,11 @@ namespace OniAgent
             if (action.Type == "set_research")
             {
                 return ExecuteSetResearchAction(action, result);
+            }
+
+            if (action.Type == "cancel")
+            {
+                return ExecuteCancelAction(action, result);
             }
 
             if (action.Type != "dig")
@@ -735,6 +744,76 @@ namespace OniAgent
             {
                 Debug.LogWarning("[OniAgent] Could not execute dig action: " + e);
                 result.Reason = "game_state_error";
+                return result;
+            }
+        }
+
+        private static AgentActionResult ExecuteCancelAction(AgentAction action, AgentActionResult result)
+        {
+            try
+            {
+                if (!action.X.HasValue || !action.Y.HasValue)
+                {
+                    result.Reason = "error";
+                    return result;
+                }
+
+                var world = ClusterManager.Instance.activeWorld;
+                if (world == null)
+                {
+                    result.Reason = "error";
+                    return result;
+                }
+
+                int x = action.X.Value;
+                int y = action.Y.Value;
+                var offset = world.WorldOffset;
+                if (x < offset.x || y < offset.y ||
+                    x >= offset.x + world.Width || y >= offset.y + world.Height)
+                {
+                    result.Reason = "out_of_bounds";
+                    return result;
+                }
+
+                int cell = Grid.XYToCell(x, y);
+                if (!Grid.IsValidCell(cell) || !Grid.IsValidCellInWorld(cell, world.id))
+                {
+                    result.Reason = "out_of_bounds";
+                    return result;
+                }
+
+                var diggable = Diggable.GetDiggable(cell);
+                if (diggable != null)
+                {
+                    diggable.gameObject.Trigger((int)GameHashes.Cancel);
+                    result.Cancelled = "dig";
+                    result.Ok = true;
+                    result.Reason = "ok";
+                    return result;
+                }
+
+                for (int layer = 0; layer < 45; layer++)
+                {
+                    var gameObject = Grid.Objects[cell, layer];
+                    if (gameObject == null || gameObject.GetComponent<Constructable>() == null)
+                    {
+                        continue;
+                    }
+
+                    gameObject.Trigger((int)GameHashes.Cancel);
+                    result.Cancelled = "build";
+                    result.Ok = true;
+                    result.Reason = "ok";
+                    return result;
+                }
+
+                result.Reason = "nothing_to_cancel";
+                return result;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not execute cancel action: " + e);
+                result.Reason = "error";
                 return result;
             }
         }
@@ -1810,6 +1889,7 @@ namespace OniAgent
         public string Id;
         public int? X;
         public int? Y;
+        public string Cancelled;
         public bool Ok;
         public string Reason;
     }
