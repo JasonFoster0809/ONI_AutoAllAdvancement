@@ -18,7 +18,9 @@ from .maputils import (
     cell_at_xy,
     find_empty_rectangle,
     find_empty_rectangle_candidates,
+    row_col_to_xy,
     state_map,
+    xy_to_row_col,
 )
 
 
@@ -79,6 +81,372 @@ def _build_action(
         "elements": selected_elements,
         "priority": 5,
     }
+
+
+def _emergency_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    result = float(value)
+    return result if math.isfinite(result) else None
+
+
+def _room_cells(
+    state: Mapping[str, Any], center: tuple[int, int]
+) -> tuple[list[str], dict[str, int], set[tuple[int, int]]]:
+    try:
+        rows, origin = state_map(state)
+    except (KeyError, TypeError, ValueError) as error:
+        raise SkillPlanningError("invalid_map") from error
+
+    start_cell = cell_at_xy(rows, origin, center[0], center[1])
+    if start_cell not in BUILDABLE_MAP_CELLS:
+        raise SkillPlanningError("dupe_room_unavailable")
+    start_row, start_column = xy_to_row_col(
+        center[0], center[1], origin, map_height=len(rows)
+    )
+    pending = [(start_row, start_column)]
+    visited = {pending[0]}
+    cells: set[tuple[int, int]] = set()
+    while pending:
+        row, column = pending.pop()
+        cells.add(row_col_to_xy(row, column, origin, map_height=len(rows)))
+        for neighbor in (
+            (row - 1, column),
+            (row + 1, column),
+            (row, column - 1),
+            (row, column + 1),
+        ):
+            neighbor_row, neighbor_column = neighbor
+            if (
+                neighbor in visited
+                or not 0 <= neighbor_row < len(rows)
+                or not 0 <= neighbor_column < len(rows[0])
+                or rows[neighbor_row][neighbor_column] not in BUILDABLE_MAP_CELLS
+            ):
+                continue
+            visited.add(neighbor)
+            pending.append(neighbor)
+    return rows, origin, cells
+
+
+def _find_room_placement(
+    rows: list[str],
+    origin: Mapping[str, int],
+    room_cells: set[tuple[int, int]],
+    center: tuple[int, int],
+    width: int,
+    height: int,
+    reserved: set[tuple[int, int]],
+) -> dict[str, int] | None:
+    for candidate in find_empty_rectangle_candidates(
+        rows,
+        origin,
+        width,
+        height,
+        center=center,
+        reserved=reserved,
+    ):
+        floor_row = candidate["row"] + 1
+        if floor_row >= len(rows) or any(
+            rows[floor_row][column] not in {"#", "F", "X"}
+            for column in range(candidate["column"], candidate["column"] + width)
+        ):
+            continue
+        footprint = {
+            (candidate["left_x"] + dx, candidate["bottom_y"] + dy)
+            for dx in range(width)
+            for dy in range(height)
+        }
+        if footprint <= room_cells:
+            return candidate
+    return None
+
+
+def _emergency_materials(
+    building: Mapping[str, Any],
+    state: Mapping[str, Any],
+    stock_budget: dict[str, tuple[str, float]],
+) -> list[str]:
+    categories = material_categories(building)
+    if not categories:
+        return []
+
+    budget = dict(stock_budget)
+    selected: list[str] = []
+    for category in categories:
+        required_mass = _emergency_number(category.get("mass_kg"))
+        if required_mass is None or required_mass < 0:
+            raise SkillPlanningError("material_mass_unavailable")
+        options = category.get("options")
+        if not isinstance(options, list) or any(
+            not isinstance(option, str) for option in options
+        ):
+            raise SkillPlanningError("invalid_material_options")
+        choice = None
+        for option in options:
+            stock_item = budget.get(option.casefold())
+            if stock_item is not None and stock_item[1] >= required_mass:
+                choice = stock_item
+                break
+        if choice is None:
+            raise SkillPlanningError("insufficient_material")
+        selected.append(choice[0])
+        budget[choice[0].casefold()] = (choice[0], choice[1] - required_mass)
+
+    stock_budget.clear()
+    stock_budget.update(budget)
+    return selected
+
+
+def _emergency_stock_budget(
+    state: Mapping[str, Any],
+) -> dict[str, tuple[str, float]]:
+    resources = state.get("resources")
+    stock = resources.get("materials") if isinstance(resources, Mapping) else None
+    if not isinstance(stock, Mapping):
+        raise SkillPlanningError("material_inventory_unavailable")
+    return {
+        name.casefold(): (name, amount)
+        for name, value in stock.items()
+        if isinstance(name, str)
+        and (amount := _emergency_number(value)) is not None
+        and amount >= 0
+    }
+
+
+def _live_dupes(state: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    dupes = state.get("dupes")
+    return [dupe for dupe in dupes if isinstance(dupe, Mapping)] if isinstance(dupes, list) else []
+
+
+def _dupe_position(dupe: Mapping[str, Any]) -> tuple[int, int] | None:
+    x, y = dupe.get("x"), dupe.get("y")
+    if (
+        isinstance(x, bool)
+        or not isinstance(x, int)
+        or isinstance(y, bool)
+        or not isinstance(y, int)
+    ):
+        return None
+    return x, y
+
+
+def _catalog_building(
+    catalog: Sequence[Mapping[str, Any]], building_id: str
+) -> Mapping[str, Any]:
+    try:
+        building = get_building(catalog, building_id)
+    except CatalogError as error:
+        raise SkillPlanningError("building_unavailable") from error
+    if building.get("unlocked") is not True:
+        raise SkillPlanningError("building_locked")
+    building_dimensions(building)
+    return building
+
+
+def _building_entry_count(
+    state: Mapping[str, Any], building_id: str
+) -> int:
+    buildings = state.get("building_list")
+    if not isinstance(buildings, list):
+        return 0
+    return sum(
+        1
+        for entry in buildings
+        if isinstance(entry, Mapping)
+        and entry.get("id") == building_id
+        and entry.get("state") in {"built", "under_construction"}
+    )
+
+
+def _emergency_build_action(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+    building_id: str,
+    center: tuple[int, int],
+    rows: list[str],
+    origin: Mapping[str, int],
+    room_cells: set[tuple[int, int]],
+    reserved: set[tuple[int, int]],
+    stock_budget: dict[str, tuple[str, float]],
+) -> dict[str, Any]:
+    building = _catalog_building(catalog, building_id)
+    width, height = building_dimensions(building)
+    placement = _find_room_placement(
+        rows, origin, room_cells, center, width, height, reserved
+    )
+    if placement is None:
+        raise SkillPlanningError("no_valid_placement")
+    trial_budget = dict(stock_budget)
+    materials = _emergency_materials(building, state, trial_budget)
+    stock_budget.clear()
+    stock_budget.update(trial_budget)
+    for dx in range(width):
+        for dy in range(height):
+            reserved.add((placement["left_x"] + dx, placement["bottom_y"] + dy))
+    return _build_action(building, state, placement["x"], placement["y"], materials)
+
+
+def _priority_actions(
+    dupes: Sequence[Mapping[str, Any]],
+    groups: Sequence[str],
+    desired_priority: int,
+    *,
+    lower_only: bool,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    actions: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    for dupe in dupes:
+        name = dupe.get("name")
+        priorities = dupe.get("job_priorities")
+        if not isinstance(name, str) or not name or not isinstance(priorities, Mapping):
+            skipped.append("dupe_job_priorities_unavailable")
+            continue
+        for group in groups:
+            current = priorities.get(group)
+            if not isinstance(current, int) or isinstance(current, bool):
+                skipped.append(f"priority_group_unavailable:{group}")
+                continue
+            if current == desired_priority or (lower_only and current < desired_priority):
+                continue
+            actions.append(
+                {
+                    "type": "set_dupe_priority",
+                    "dupe": name,
+                    "group": group,
+                    "priority": desired_priority,
+                }
+            )
+    return actions, skipped
+
+
+def plan_emergency_actions(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+    category: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Create bounded emergency actions using only current state/catalog data."""
+    plan: dict[str, Any] = {"actions": [], "skipped": [], "reason": reason}
+    dupes = _live_dupes(state)
+
+    if category == "oxygen":
+        existing = [
+            entry
+            for entry in state.get("building_list", [])
+            if isinstance(entry, Mapping)
+            and entry.get("id") == "MineralDeoxidizer"
+            and entry.get("state") in {"built", "under_construction"}
+        ] if isinstance(state.get("building_list"), list) else []
+        if existing:
+            built = [entry for entry in existing if entry.get("state") == "built"]
+            algae_values = [
+                _emergency_number(
+                    entry.get("stored", {}).get("Algae")
+                    if isinstance(entry.get("stored"), Mapping)
+                    else None
+                )
+                for entry in built
+            ]
+            if not built:
+                warning = "mineral_deoxidizer_pending"
+            elif any(value is not None and value > 0 for value in algae_values):
+                warning = "mineral_deoxidizer_algae_present"
+            elif all(value is not None for value in algae_values):
+                warning = "thiếu_algae"
+            else:
+                warning = "thiếu_dữ_liệu_algae"
+            plan["skipped"].append({"reason": warning})
+            return plan
+        if not dupes:
+            plan["skipped"].append({"reason": "no_dupe_position"})
+            return plan
+        center = next((_dupe_position(dupe) for dupe in dupes if _dupe_position(dupe)), None)
+        if center is None:
+            plan["skipped"].append({"reason": "no_dupe_position"})
+            return plan
+        try:
+            rows, origin, room_cells = _room_cells(state, center)
+            action = _emergency_build_action(
+                state,
+                catalog,
+                "MineralDeoxidizer",
+                center,
+                rows,
+                origin,
+                room_cells,
+                set(),
+                _emergency_stock_budget(state),
+            )
+        except SkillPlanningError as error:
+            plan["skipped"].append({"reason": error.reason})
+        else:
+            plan["actions"].append(action)
+        return plan
+
+    if category == "food":
+        actions, skipped = _priority_actions(
+            dupes, ("Farming", "Cook", "Ranching"), 4, lower_only=False
+        )
+        plan["actions"] = actions
+        plan["skipped"].extend({"reason": item} for item in skipped)
+        return plan
+
+    if category == "stress":
+        stressed = [
+            dupe
+            for dupe in dupes
+            if (_emergency_number(dupe.get("stress")) or 0) >= 90
+        ]
+        priorities, skipped = _priority_actions(
+            stressed, ("Dig", "Build"), 2, lower_only=True
+        )
+        plan["actions"].extend(priorities)
+        plan["skipped"].extend({"reason": item} for item in skipped)
+        if not dupes:
+            plan["skipped"].append({"reason": "no_dupes"})
+            return plan
+        if not stressed:
+            plan["skipped"].append({"reason": "stressed_dupe_unavailable"})
+            return plan
+        center = next((_dupe_position(dupe) for dupe in stressed if _dupe_position(dupe)), None)
+        if center is None:
+            plan["skipped"].append({"reason": "no_dupe_position"})
+            return plan
+        try:
+            rows, origin, room_cells = _room_cells(state, center)
+            stock_budget = _emergency_stock_budget(state)
+        except SkillPlanningError as error:
+            plan["skipped"].append({"reason": error.reason})
+            return plan
+
+        reserved: set[tuple[int, int]] = set()
+        for building_id in ("Bed", "Outhouse", "WashBasin"):
+            shortage = max(0, len(dupes) - _building_entry_count(state, building_id))
+            for _ in range(shortage):
+                try:
+                    action = _emergency_build_action(
+                        state,
+                        catalog,
+                        building_id,
+                        center,
+                        rows,
+                        origin,
+                        room_cells,
+                        reserved,
+                        stock_budget,
+                    )
+                except SkillPlanningError as error:
+                    plan["skipped"].append(
+                        {"reason": error.reason, "building": building_id}
+                    )
+                    break
+                plan["actions"].append(action)
+        return plan
+
+    if category == "temperature":
+        plan["skipped"].append({"reason": "temperature_warning_only"})
+    return plan
 
 
 def build_bedroom(

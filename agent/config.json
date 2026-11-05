@@ -7,5 +7,9 @@
   "barracks_bed_count": 4,
   "oxygen_min_g": 50.0,
   "oxygen_consecutive_readings": 3,
+  "emergency_food_kcal_per_dupe": 1000.0,
+  "emergency_max_actions_per_turn": 12,
+  "emergency_cooldown_cycles": 1,
+  "emergency_pending_cycles": 2,
   "goal_ranks": {}
 }

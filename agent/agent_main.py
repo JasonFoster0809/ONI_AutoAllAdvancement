@@ -22,7 +22,8 @@ from .planner import (
     registered_goal_ids,
     update_pending,
 )
-from .rules import choose_emergency_action, oxygen_value
+from .rules import detect_emergency, oxygen_value
+from .skills import plan_emergency_actions
 
 
 LOGGER = logging.getLogger(__name__)
@@ -39,6 +40,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "barracks_bed_count": 4,
     "oxygen_min_g": 50.0,
     "oxygen_consecutive_readings": 3,
+    "emergency_food_kcal_per_dupe": 1000.0,
+    "emergency_max_actions_per_turn": 12,
+    "emergency_cooldown_cycles": 1,
+    "emergency_pending_cycles": 2,
     "goal_ranks": {},
 }
 
@@ -80,6 +85,18 @@ def load_agent_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
         or oxygen_readings <= 0
     ):
         raise ValueError("oxygen_consecutive_readings must be a positive integer")
+    food_kcal_per_dupe = config["emergency_food_kcal_per_dupe"]
+    if (
+        isinstance(food_kcal_per_dupe, bool)
+        or not isinstance(food_kcal_per_dupe, (int, float))
+        or not math.isfinite(food_kcal_per_dupe)
+        or food_kcal_per_dupe < 0
+    ):
+        raise ValueError("emergency_food_kcal_per_dupe must be a finite non-negative number")
+    for key in ("emergency_max_actions_per_turn", "emergency_cooldown_cycles", "emergency_pending_cycles"):
+        value = config[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{key} must be a positive integer")
     return config
 
 
@@ -139,10 +156,89 @@ def _copy_pending(pending: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     return json.loads(json.dumps(pending, ensure_ascii=False))
 
 
+def _state_cycle(state: Mapping[str, Any]) -> int | None:
+    cycle = state.get("cycle")
+    return cycle if isinstance(cycle, int) and not isinstance(cycle, bool) and cycle >= 0 else None
+
+
+def _emergency_action_satisfied(
+    action: Mapping[str, Any], state: Mapping[str, Any]
+) -> bool:
+    if action.get("type") == "build":
+        buildings = state.get("building_list")
+        if not isinstance(buildings, list):
+            return False
+        return any(
+            isinstance(building, Mapping)
+            and building.get("id") == action.get("id")
+            and building.get("x") == action.get("x")
+            and building.get("y") == action.get("y")
+            and building.get("state") in {"built", "under_construction"}
+            for building in buildings
+        )
+    if action.get("type") == "set_dupe_priority":
+        dupes = state.get("dupes")
+        if not isinstance(dupes, list):
+            return False
+        return any(
+            isinstance(dupe, Mapping)
+            and isinstance(dupe.get("name"), str)
+            and dupe["name"].casefold() == str(action.get("dupe", "")).casefold()
+            and isinstance(dupe.get("job_priorities"), Mapping)
+            and dupe["job_priorities"].get(action.get("group")) == action.get("priority")
+            for dupe in dupes
+        )
+    return False
+
+
+def _update_emergency_pending(
+    state: Mapping[str, Any],
+    pending: dict[str, dict[str, Any]],
+    cycle: int | None,
+    max_pending_cycles: int,
+) -> list[dict[str, str]]:
+    expired: list[dict[str, str]] = []
+    for category, item in list(pending.items()):
+        actions = item.get("actions", [])
+        remaining = [
+            action
+            for action in actions
+            if isinstance(action, Mapping)
+            and not _emergency_action_satisfied(action, state)
+        ]
+        if not remaining:
+            del pending[category]
+            continue
+        submitted_cycle = item.get("submitted_cycle")
+        if (
+            cycle is not None
+            and isinstance(submitted_cycle, int)
+            and cycle - submitted_cycle >= max_pending_cycles
+        ):
+            expired.append({"category": category, "reason": "pending_expired"})
+            del pending[category]
+            continue
+        item["actions"] = [dict(action) for action in remaining]
+    return expired
+
+
+def _accepted_emergency_actions(
+    actions: Sequence[Mapping[str, Any]], result: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    results = result.get("results")
+    if not isinstance(results, list):
+        return []
+    return [
+        dict(action)
+        for action, action_result in zip(actions, results)
+        if isinstance(action_result, Mapping) and action_result.get("ok") is True
+    ]
+
+
 def run(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    config = load_agent_config(args.config)
+    config = {**DEFAULT_CONFIG, **load_agent_config(args.config)}
     if args.barracks_bed_count is not None:
         config["barracks_bed_count"] = args.barracks_bed_count
     if args.tile_id is not None:
@@ -152,6 +248,8 @@ def run(argv: Sequence[str] | None = None) -> int:
         maxlen=config["oxygen_consecutive_readings"]
     )
     pending: dict[str, dict[str, Any]] = {}
+    emergency_pending: dict[str, dict[str, Any]] = {}
+    emergency_cooldowns: dict[str, int] = {}
     step = 0
 
     while args.max_steps == 0 or step < args.max_steps:
@@ -162,10 +260,13 @@ def run(argv: Sequence[str] | None = None) -> int:
         selection_reason = "rule"
         result: Mapping[str, Any] = {"reason": "no_goal"}
         pending_expired: list[dict[str, Any]] = []
+        emergency_pending_expired: list[dict[str, str]] = []
         catalog: list[dict[str, Any]] = []
+        cycle: int | None = None
 
         try:
             state = read_state(args.data_dir)
+            cycle = _state_cycle(state)
             oxygen = oxygen_value(state)
             oxygen_history.append(
                 oxygen is not None and oxygen < config["oxygen_min_g"]
@@ -179,26 +280,71 @@ def run(argv: Sequence[str] | None = None) -> int:
                 config["pending_steps"],
                 catalog,
             )
+            emergency_pending_expired = _update_emergency_pending(
+                state,
+                emergency_pending,
+                cycle,
+                config["emergency_pending_cycles"],
+            )
             for expired in pending_expired:
                 LOGGER.warning(
                     "Pending goal %s expired after %d steps",
                     expired["goal_id"],
                     config["pending_steps"],
                 )
+            for expired in emergency_pending_expired:
+                LOGGER.warning(
+                    "Emergency %s pending actions expired", expired["category"]
+                )
 
-            emergency = choose_emergency_action(
+            emergency = detect_emergency(
                 state,
-                [],
                 oxygen_history=tuple(oxygen_history),
                 oxygen_min_g=config["oxygen_min_g"],
                 oxygen_consecutive_readings=config["oxygen_consecutive_readings"],
+                food_kcal_per_dupe=config["emergency_food_kcal_per_dupe"],
             )
             if emergency is not None:
+                category = emergency["category"]
+                reason = emergency["reason"]
+                if category in emergency_pending:
+                    emergency_plan = {
+                        "actions": [],
+                        "skipped": [{"reason": "emergency_pending"}],
+                    }
+                elif cycle is None:
+                    emergency_plan = {
+                        "actions": [],
+                        "skipped": [{"reason": "cycle_unavailable"}],
+                    }
+                elif cycle < emergency_cooldowns.get(category or "", -1):
+                    emergency_plan = {
+                        "actions": [],
+                        "skipped": [{"reason": "emergency_cooldown"}],
+                    }
+                else:
+                    emergency_plan = plan_emergency_actions(
+                        state, catalog, category or "", reason or "emergency"
+                    )
+                planned_actions = emergency_plan["actions"]
+                max_actions = config["emergency_max_actions_per_turn"]
+                if len(planned_actions) > max_actions:
+                    emergency_plan["skipped"].append(
+                        {"reason": "emergency_action_limit"}
+                    )
+                    planned_actions = planned_actions[:max_actions]
+                for skipped_item in emergency_plan["skipped"]:
+                    LOGGER.warning(
+                        "Emergency %s skipped: %s",
+                        category,
+                        skipped_item["reason"],
+                    )
                 selected = {
                     "goal_id": "emergency",
-                    "actions": emergency.get("actions", []),
-                    "skipped": [],
-                    "reason": emergency.get("reason", "emergency"),
+                    "actions": planned_actions,
+                    "skipped": emergency_plan["skipped"],
+                    "reason": reason or "emergency",
+                    "emergency_category": category,
                 }
                 selection_reason = "rule"
             else:
@@ -246,23 +392,38 @@ def run(argv: Sequence[str] | None = None) -> int:
                         selected = {**chosen_goal, "skipped": selected["skipped"]}
 
             actions = selected["actions"]
+            emergency_category = selected.get("emergency_category")
+            if emergency_category is not None and cycle is not None:
+                emergency_cooldowns[emergency_category] = (
+                    cycle + config["emergency_cooldown_cycles"]
+                )
             if not actions:
-                result = {"reason": selected.get("reason", "no_goal")}
+                result = {
+                    "reason": selected.get("reason", "no_goal"),
+                    "skipped": selected.get("skipped", []),
+                }
             elif args.dry_run:
                 result = {"reason": "dry_run", "actions": actions}
             else:
                 command_result = send_command(actions, args.data_dir)
                 result = command_result
-                command_results = command_result.get("results")
-                if isinstance(command_results, list) and all(
-                    isinstance(item, Mapping) for item in command_results
+                if emergency_category is not None and cycle is not None:
+                    accepted = _accepted_emergency_actions(actions, command_result)
+                    if accepted:
+                        emergency_pending[emergency_category] = {
+                            "actions": accepted,
+                            "submitted_cycle": cycle,
+                        }
+                elif isinstance(command_result.get("results"), list) and all(
+                    isinstance(item, Mapping)
+                    for item in command_result["results"]
                 ):
                     mark_pending(
                         pending,
                         selected["goal_id"],
                         actions,
                         step,
-                        command_results,
+                        command_result["results"],
                     )
         except (OSError, ValueError, TimeoutError, CatalogError) as error:
             LOGGER.exception("Agent step %d failed", step)
@@ -283,6 +444,9 @@ def run(argv: Sequence[str] | None = None) -> int:
             "selection_reason": selection_reason,
             "pending": _copy_pending(pending),
             "pending_expired": pending_expired,
+            "emergency_pending": _copy_pending(emergency_pending),
+            "emergency_pending_expired": emergency_pending_expired,
+            "emergency_cooldowns": emergency_cooldowns,
             "result": result,
         }
         _append_log(entry)

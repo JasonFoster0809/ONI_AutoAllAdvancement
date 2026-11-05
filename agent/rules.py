@@ -44,8 +44,10 @@ def oxygen_rule(
     return None
 
 
-def hunger_rule(state: Mapping[str, Any]) -> str | None:
-    """Flag a duplicant with no calories or nearly depleted food reserves."""
+def hunger_rule(
+    state: Mapping[str, Any], food_kcal_per_dupe: float = 1000.0
+) -> str | None:
+    """Flag a hungry dupe or food stock below one estimated cycle's demand."""
     dupes = state.get("dupes")
     if isinstance(dupes, list):
         for dupe in dupes:
@@ -56,6 +58,19 @@ def hunger_rule(state: Mapping[str, Any]) -> str | None:
                 return "dupe_hungry"
     if _has_alert(state, "dupe_no_calories"):
         return "dupe_hungry"
+    resources = state.get("resources")
+    food_kcal = (
+        _number(resources.get("food_kcal"))
+        if isinstance(resources, Mapping)
+        else None
+    )
+    if (
+        isinstance(dupes, list)
+        and dupes
+        and food_kcal is not None
+        and food_kcal < len(dupes) * food_kcal_per_dupe
+    ):
+        return "food_stock_low"
     return None
 
 
@@ -117,8 +132,45 @@ def choose_emergency_action(
     oxygen_history: Sequence[bool] | None = None,
     oxygen_min_g: float = OXYGEN_MIN_G,
     oxygen_consecutive_readings: int = 1,
+    food_kcal_per_dupe: float = 1000.0,
 ) -> dict[str, Any] | None:
     """Apply the highest-priority rule before any LLM choice."""
+    emergency = detect_emergency(
+        state,
+        oxygen_history=oxygen_history,
+        oxygen_min_g=oxygen_min_g,
+        oxygen_consecutive_readings=oxygen_consecutive_readings,
+        food_kcal_per_dupe=food_kcal_per_dupe,
+    )
+    if emergency is None:
+        return None
+    reason = emergency["reason"]
+    category = emergency["category"]
+    if category is not None:
+        match = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.get("category") == category
+                and isinstance(candidate.get("id"), str)
+                and isinstance(candidate.get("actions"), list)
+            ),
+            None,
+        )
+        if match is not None:
+            return {**match, "reason": reason}
+    return {"id": "no_op", "category": "no_op", "actions": [], "reason": reason}
+
+
+def detect_emergency(
+    state: Mapping[str, Any],
+    *,
+    oxygen_history: Sequence[bool] | None = None,
+    oxygen_min_g: float = OXYGEN_MIN_G,
+    oxygen_consecutive_readings: int = 1,
+    food_kcal_per_dupe: float = 1000.0,
+) -> dict[str, str | None] | None:
+    """Return the highest-priority detected emergency, independent of actions."""
     ordered_rules = (
         (
             lambda current_state: oxygen_rule(current_state, oxygen_min_g)
@@ -131,7 +183,7 @@ def choose_emergency_action(
             else None,
             "oxygen",
         ),
-        (hunger_rule, "food"),
+        (lambda current_state: hunger_rule(current_state, food_kcal_per_dupe), "food"),
         (stress_rule, "stress"),
         (temperature_rule, "temperature"),
         (alert_rule, None),
@@ -140,18 +192,5 @@ def choose_emergency_action(
         reason = rule(state)
         if reason is None:
             continue
-        if category is not None:
-            match = next(
-                (
-                    candidate
-                    for candidate in candidates
-                    if candidate.get("category") == category
-                    and isinstance(candidate.get("id"), str)
-                    and isinstance(candidate.get("actions"), list)
-                ),
-                None,
-            )
-            if match is not None:
-                return {**match, "reason": reason}
-        return {"id": "no_op", "category": "no_op", "actions": [], "reason": reason}
+        return {"category": category, "reason": reason}
     return None
