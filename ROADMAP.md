@@ -9,6 +9,10 @@ rooms, achievements, environment, power, and simple alerts. Remaining work
 is to compare these readings with a running colony and check their cost and
 correctness across game updates.
 
+Built entries may also include optional operational state, power state, and
+Mineral Deoxidizer stored Algae mass. These fields are covered by offline
+fixtures and tests; live C# telemetry verification remains open.
+
 ## 2. Safe game commands
 
 **Status: implemented and build-validated; waiting for in-game verification.**
@@ -50,7 +54,7 @@ or resend the already-published command.
 
 **Status: offline tests and documentation complete; live validation open.**
 
-`python -m pytest -q` currently passes 46 offline tests. `dotnet build`
-passes. The C# mod and Python file exchange have not been tested in the game,
-and no deployment, DLL copy, or live command test was performed. Re-run the
-API verification and build after game updates.
+`python -m pytest -q` currently passes 54 offline tests. `dotnet build`
+passes with 0 warnings and 0 errors. The C# mod and Python file exchange have
+not been tested in the game, and no deployment, DLL copy, or live command
+test was performed. Re-run the API verification and build after game updates.

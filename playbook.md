@@ -10,8 +10,11 @@ they depend on traits, building configuration, or game version.
    - Maintain an oxygen supply before expanding the colony.
    - A duplicant consumes approximately 100 g of oxygen per second of game
      time. Treat this as a planning estimate; actual demand can vary.
-   - A Mineral Deoxidizer uses Algae as its input. Check available Algae and
-     the building's operating status before relying on it.
+   - A Mineral Deoxidizer uses Algae as its input. The installed game code
+     configures 0.55 kg/s Algae consumption, 0.5 kg/s Oxygen output, and
+     120 W active power use. These are configured rates, not a guarantee of
+     live throughput; check the building's status and stored Algae before
+     relying on it.
    - Monitor breathable oxygen around duplicants, not only oxygen stored in
      the world inventory.
 
@@ -92,6 +95,13 @@ they depend on traits, building configuration, or game version.
   Python Barracks planner aggregates catalog `mass_kg` by material group
   before selecting elements; it refuses to plan when inventory or required
   mass data is unavailable.
+- Built entries in `building_list` may include `operational`, `powered`, and
+  `stored`. `operational` is the game's aggregate operational-requirements
+  state, not proof the building is actively converting material.
+  `powered` appears only for power-input buildings when their energy consumer
+  is readable. Mineral Deoxidizer `stored.Algae` is its contained Algae mass
+  in kg. These fields refresh with the existing building-list cache
+  (approximately every 10 seconds) and may be absent when unavailable.
 - `rooms` reports the RoomProber type, cell count, and a representative
   coordinate. It always includes non-Neutral room types and includes a
   Neutral room only when its cell list contains the cell of a building in
@@ -111,7 +121,8 @@ they depend on traits, building configuration, or game version.
   game conditions may change effective rates.
 - Exact Research Center Dirt consumption in the currently installed game
   version and any modifiers that affect research rate.
-- Mineral Deoxidizer throughput and algae consumption under current settings.
+- Whether live Mineral Deoxidizer throughput matches its configured rates,
+  including the effects of game conditions and user settings.
 - Whether Barracks Morale is applied on waking and the exact behavior in the
   installed game version.
 - The Morale requirements and effects for Mess Hall and Great Hall.

@@ -553,3 +553,53 @@ Barracks do agent lập kế hoạch đã được xây và game công nhận t�
 
 Kết quả cuối: `python -m pytest -q` — **53 passed**. Chỉ chạy kiểm thử
 offline bằng fixture/mocks; không chạy game, deploy hoặc build C#.
+
+## Bổ sung: trạng thái vận hành công trình
+
+| Giai đoạn | Trạng thái | Kết quả |
+|---|---|---|
+| 1. Xác minh API | XONG | `Operational.IsOperational`, `IEnergyConsumer.IsPowered`, `Storage.items`, `PrimaryElement.Mass`, và cấu hình Mineral Deoxidizer được decompile từ Assembly-CSharp. |
+| 2. State C# | XONG | Chỉ thêm trường tùy chọn cho công trình built; mỗi trường có `try/catch` và log riêng; dùng k-cache `building_list` ~10 giây hiện có. |
+| 3. Python tương thích | XONG | 3 fixture mới cho hoạt động, mất điện và state cũ; `read_state` đọc cả ba dạng. |
+| 4. Tài liệu | XONG | README_API.md, playbook.md và ROADMAP.md được cập nhật. |
+
+**Xác minh code game:** `Operational.IsOperational` phản ánh điều kiện
+operational tổng hợp, `IsActive` là trạng thái khác nên không dùng thay cho
+field `operational`. Công trình có `RequiresPowerInput` sẽ được xuất
+`powered` khi `IEnergyConsumer` đọc được. Mineral Deoxidizer yêu cầu điện,
+tiêu thụ Algae và cấu hình 120 W, 0.55 kg/s Algae, 0.5 kg/s Oxygen; các
+rate này là thông số cấu hình trong code, chưa xác minh throughput thật
+trong game.
+
+**BỎ QUA:** không diễn giải `Storage.GetAmountAvailable(Tag)` trực tiếp là
+kg; API trả tổng `PrimaryElement.Units`, và tương đương kg của Units không
+được xác minh cho Algae. Trường `stored.Algae` dùng tổng
+`PrimaryElement.Mass` của các Algae trong `Storage.items` thay thế. Không
+thêm `IsActive`; nó không đồng nghĩa với `IsOperational`. Không triển khai
+stored cho các loại công trình khác ngoài Mineral Deoxidizer vì chưa xác
+minh nhu cầu/loại vật liệu của chúng.
+
+Kiểm thử cuối: `python -m pytest -q` — **54 passed in 0.37s**;
+`dotnet build` — **Build succeeded, 0 Warning(s), 0 Error(s)**.
+
+Cú pháp PowerShell để xem trạng thái hiện tại (state được cập nhật qua luồng
+thường, không cần action mới):
+
+```powershell
+Get-Content "$env:USERPROFILE\Documents\Klei\OxygenNotIncluded\oni_state.json" -Raw |
+  ConvertFrom-Json |
+  Select-Object -ExpandProperty building_list |
+  Where-Object { $_.id -eq "MineralDeoxidizer" } |
+  Select-Object id, state, operational, powered, stored
+```
+
+Commit riêng từng giai đoạn, không push:
+
+- `9a20293` — xác minh API và README
+- `058f005` — C# telemetry và README
+- `c5b4cf6` — fixture và pytest
+- giai đoạn 4: commit tài liệu riêng
+
+C# mới **CHƯA test thật trong game**. Không deploy, không copy DLL, không
+chạy ONI; các action đã test thật không bị sửa. Chưa có lỗi build/pytest nào
+lặp ba lần.
