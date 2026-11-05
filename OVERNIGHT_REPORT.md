@@ -160,8 +160,9 @@ Các phần không được thêm do thiếu API/state đã xác minh hoặc vì
 - `1560f03` — Add offline ONI agent library
 - `84403b5` — Add rule-based local action agent
 - `f34a707` — Add offline Python test coverage
-- Giai đoạn 11 — commit tài liệu cuối: hash được nêu trong câu trả lời hoàn tất.
-- Giai đoạn 9 follow-up — xử lý luật khẩn cấp trước planner: hash được nêu trong câu trả lời hoàn tất.
+- `3736e01` — Document agent architecture and roadmap
+- `46d31b7` — Prioritize emergency rules before planning
+- Commit cập nhật danh sách hash trong báo cáo: hash được nêu trong câu trả lời hoàn tất.
 
 **Tất cả code C# mới CHƯA được test thật trong game.** Python chỉ được test
 offline bằng fixture/mocks; chưa xác thực trao đổi file với game thật hoặc
