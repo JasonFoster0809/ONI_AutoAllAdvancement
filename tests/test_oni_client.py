@@ -41,7 +41,7 @@ def test_read_state_accepts_operational_building_and_legacy_fixtures(tmp_path):
         else:
             assert building["operational"] is operational
             assert building["powered"] is powered
-            assert building["stored"]["Algae"] == 120.5
+            assert building["stored"] == [{"element": "Algae", "kg": 120.5}]
 
 
 def test_send_command_waits_for_matching_result(tmp_path, monkeypatch):

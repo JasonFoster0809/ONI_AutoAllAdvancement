@@ -2313,11 +2313,6 @@ namespace OniAgent
                     entry.Id + ": " + e);
             }
 
-            if (entry.Id != "MineralDeoxidizer")
-            {
-                return;
-            }
-
             try
             {
                 var storage = building.GetComponent<Storage>();
@@ -2326,30 +2321,70 @@ namespace OniAgent
                     return;
                 }
 
-                var algaeTag = new Tag("Algae");
-                float algaeMassKg = 0f;
+                if (storage.items == null)
+                {
+                    throw new InvalidOperationException("Storage item list is unavailable.");
+                }
+
+                var storedMassByElement = new SortedDictionary<string, float>(StringComparer.Ordinal);
                 for (int i = 0; i < storage.items.Count; i++)
                 {
-                    var item = storage.items[i];
-                    if (item == null || !item.HasTag(algaeTag))
+                    try
                     {
-                        continue;
-                    }
+                        var item = storage.items[i];
+                        if (item == null)
+                        {
+                            throw new InvalidOperationException("Storage contains a null item.");
+                        }
 
-                    var primaryElement = item.GetComponent<PrimaryElement>();
-                    if (primaryElement == null)
-                    {
-                        throw new InvalidOperationException(
-                            "Stored Algae has no PrimaryElement component.");
+                        var primaryElement = item.GetComponent<PrimaryElement>();
+                        if (primaryElement == null || primaryElement.Element == null ||
+                            primaryElement.Element.tag == null)
+                        {
+                            throw new InvalidOperationException(
+                                "Stored item has no readable primary element.");
+                        }
+
+                        string element = primaryElement.Element.tag.Name;
+                        float massKg = primaryElement.Mass;
+                        if (float.IsNaN(massKg) || float.IsInfinity(massKg) || massKg < 0f)
+                        {
+                            throw new InvalidOperationException("Stored item mass is invalid.");
+                        }
+
+                        if (storedMassByElement.ContainsKey(element))
+                        {
+                            storedMassByElement[element] += massKg;
+                        }
+                        else
+                        {
+                            storedMassByElement.Add(element, massKg);
+                        }
                     }
-                    algaeMassKg += primaryElement.Mass;
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning("[OniAgent] Could not read stored item " + i +
+                            " for building " + entry.Id + ": " + e);
+                    }
                 }
 
                 AppendPropertyPrefix(sb, ref hasProperty, "stored");
-                sb.Append("{");
-                bool hasStoredProperty = false;
-                AppendNumberProperty(sb, ref hasStoredProperty, "Algae", algaeMassKg);
-                sb.Append("}");
+                sb.Append("[");
+                bool hasStoredItem = false;
+                foreach (var item in storedMassByElement)
+                {
+                    if (hasStoredItem)
+                    {
+                        sb.Append(",");
+                    }
+                    hasStoredItem = true;
+                    sb.Append("{");
+                    bool hasStoredItemProperty = false;
+                    AppendStringProperty(sb, ref hasStoredItemProperty, "element", item.Key);
+                    AppendNumberProperty(sb, ref hasStoredItemProperty, "kg", item.Value);
+                    sb.Append("}");
+                }
+                sb.Append("]");
             }
             catch (Exception e)
             {

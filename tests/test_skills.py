@@ -150,6 +150,11 @@ def test_existing_deoxidizer_warns_without_building_duplicate():
     assert plan["actions"] == []
     assert plan["skipped"] == [{"reason": "thiếu_algae"}]
 
+    state["building_list"][0]["stored"] = {"Algae": 0}
+    plan = plan_emergency_actions(state, catalog, "oxygen", "low_oxygen")
+    assert plan["actions"] == []
+    assert plan["skipped"] == [{"reason": "thiếu_algae"}]
+
     del state["building_list"][0]["stored"]
     plan = plan_emergency_actions(state, catalog, "oxygen", "low_oxygen")
     assert plan["actions"] == []

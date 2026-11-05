@@ -22,7 +22,7 @@
       "x": 1,
       "y": 0,
       "state": "built",
-      "stored": {"Algae": 0}
+      "stored": [{"element": "Algae", "kg": 0}]
     }
   ],
   "world": {

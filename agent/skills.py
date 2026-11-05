@@ -90,6 +90,16 @@ def _emergency_number(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
+def _stored_element_mass(stored: Any, element: str) -> float | None:
+    if isinstance(stored, Mapping):
+        return _emergency_number(stored.get(element))
+    if isinstance(stored, list):
+        for item in stored:
+            if isinstance(item, Mapping) and item.get("element") == element:
+                return _emergency_number(item.get("kg"))
+    return None
+
+
 def _room_cells(
     state: Mapping[str, Any], center: tuple[int, int]
 ) -> tuple[list[str], dict[str, int], set[tuple[int, int]]]:
@@ -373,11 +383,7 @@ def plan_emergency_actions(
         if existing:
             built = [entry for entry in existing if entry.get("state") == "built"]
             algae_values = [
-                _emergency_number(
-                    entry.get("stored", {}).get("Algae")
-                    if isinstance(entry.get("stored"), Mapping)
-                    else None
-                )
+                _stored_element_mass(entry.get("stored"), "Algae")
                 for entry in built
             ]
             if not built:
