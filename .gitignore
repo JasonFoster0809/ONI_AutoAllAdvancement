@@ -14,3 +14,8 @@ blueprint.json
 *.pem
 *.pfx
 *.snk
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+logs/*.jsonl
