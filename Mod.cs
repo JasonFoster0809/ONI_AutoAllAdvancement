@@ -29,9 +29,11 @@ namespace OniAgent
         static float nextBlueprintExportCheck = 0f;
         static float nextBuildingListUpdate = 0f;
         static float nextResearchUpdate = 0f;
+        static float nextScheduleUpdate = 0f;
         static int cachedBuildingWorldId = int.MinValue;
         static string cachedBuildingListJson = "[]";
         static string cachedResearchJson;
+        static string cachedScheduleJson;
         static string lastProcessedCommandId = string.Empty;
         static AgentCommand pendingCommand;
         static readonly Queue<AgentCommandResult> pendingResults = new Queue<AgentCommandResult>();
@@ -238,6 +240,16 @@ namespace OniAgent
                 cachedResearchJson = null;
             }
 
+            try
+            {
+                UpdateScheduleCache();
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not update schedule cache: " + e);
+                cachedScheduleJson = null;
+            }
+
             ExportBlueprintIfRequested();
             AppendPropertyPrefix(sb, ref hasRootProperty, "building_list");
             sb.Append(cachedBuildingListJson);
@@ -246,6 +258,12 @@ namespace OniAgent
             {
                 AppendPropertyPrefix(sb, ref hasRootProperty, "research");
                 sb.Append(cachedResearchJson);
+            }
+
+            if (cachedScheduleJson != null)
+            {
+                AppendPropertyPrefix(sb, ref hasRootProperty, "schedule");
+                sb.Append(cachedScheduleJson);
             }
 
             AppendPropertyPrefix(sb, ref hasRootProperty, "buildings");
@@ -712,6 +730,11 @@ namespace OniAgent
                 return ExecuteSetPriorityAction(action, result);
             }
 
+            if (action.Type == "schedule")
+            {
+                return ExecuteScheduleAction(action, result);
+            }
+
             if (action.Type != "dig")
             {
                 result.Reason = "unsupported";
@@ -932,6 +955,108 @@ namespace OniAgent
             {
                 Debug.LogWarning("[OniAgent] Could not execute set_priority action: " + e);
                 result.Reason = "nothing_found";
+                return result;
+            }
+        }
+
+        private static AgentActionResult ExecuteScheduleAction(AgentAction action, AgentActionResult result)
+        {
+            try
+            {
+                if (action.InvalidScheduleBlocks ||
+                    action.ScheduleBlocks == null || action.ScheduleBlocks.Count != 24)
+                {
+                    result.Reason = "invalid_blocks";
+                    return result;
+                }
+
+                if (action.InvalidScheduleName || string.IsNullOrEmpty(action.ScheduleName))
+                {
+                    result.Reason = "unavailable";
+                    return result;
+                }
+
+                var manager = ScheduleManager.Instance;
+                var database = Db.Get();
+                if (manager == null || database == null || database.ScheduleGroups == null)
+                {
+                    result.Reason = "unavailable";
+                    return result;
+                }
+
+                Schedule targetSchedule = null;
+                var schedules = manager.GetSchedules();
+                for (int i = 0; i < schedules.Count; i++)
+                {
+                    if (!string.Equals(schedules[i].name, action.ScheduleName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (targetSchedule != null)
+                    {
+                        result.Reason = "unavailable";
+                        return result;
+                    }
+                    targetSchedule = schedules[i];
+                }
+
+                if (targetSchedule == null)
+                {
+                    result.Reason = "unavailable";
+                    return result;
+                }
+
+                var existingBlocks = targetSchedule.GetBlocks();
+                if (existingBlocks == null || existingBlocks.Count != 24)
+                {
+                    result.Reason = "unavailable";
+                    return result;
+                }
+
+                var availableGroups = database.ScheduleGroups.allGroups;
+                var selectedGroups = new List<ScheduleGroup>(24);
+                for (int blockIndex = 0; blockIndex < action.ScheduleBlocks.Count; blockIndex++)
+                {
+                    string requestedGroupId = action.ScheduleBlocks[blockIndex];
+                    ScheduleGroup selectedGroup = null;
+                    for (int groupIndex = 0; groupIndex < availableGroups.Count; groupIndex++)
+                    {
+                        var group = availableGroups[groupIndex];
+                        if (string.Equals(group.Id, requestedGroupId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            selectedGroup = group;
+                            break;
+                        }
+                    }
+
+                    if (selectedGroup == null)
+                    {
+                        result.Reason = "invalid_blocks";
+                        return result;
+                    }
+                    selectedGroups.Add(selectedGroup);
+                }
+
+                for (int blockIndex = 0; blockIndex < selectedGroups.Count; blockIndex++)
+                {
+                    if (!string.Equals(
+                        existingBlocks[blockIndex].GroupId,
+                        selectedGroups[blockIndex].Id,
+                        StringComparison.Ordinal))
+                    {
+                        targetSchedule.SetBlockGroup(blockIndex, selectedGroups[blockIndex]);
+                    }
+                }
+
+                result.Ok = true;
+                result.Reason = "ok";
+                return result;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not execute schedule action: " + e);
+                result.Reason = "error";
                 return result;
             }
         }
@@ -1377,6 +1502,104 @@ namespace OniAgent
                 Debug.LogWarning("[OniAgent] Could not refresh research state: " + e);
                 cachedResearchJson = null;
             }
+        }
+
+        private static void UpdateScheduleCache()
+        {
+            if (Time.unscaledTime < nextScheduleUpdate)
+            {
+                return;
+            }
+
+            nextScheduleUpdate = Time.unscaledTime + 10f;
+            var manager = ScheduleManager.Instance;
+            if (manager == null)
+            {
+                cachedScheduleJson = null;
+                return;
+            }
+
+            try
+            {
+                cachedScheduleJson = BuildScheduleStateJson(manager);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not refresh schedule state: " + e);
+                cachedScheduleJson = null;
+            }
+        }
+
+        private static string BuildScheduleStateJson(ScheduleManager manager)
+        {
+            var result = new StringBuilder("[");
+            bool hasSchedule = false;
+            var schedules = manager.GetSchedules();
+            for (int i = 0; i < schedules.Count; i++)
+            {
+                var schedule = schedules[i];
+                try
+                {
+                    var scheduleJson = new StringBuilder("{");
+                    bool hasProperty = false;
+                    AppendStringProperty(scheduleJson, ref hasProperty, "name", schedule.name);
+                    AppendPropertyPrefix(scheduleJson, ref hasProperty, "blocks");
+                    scheduleJson.Append("[");
+
+                    var blocks = schedule.GetBlocks();
+                    for (int blockIndex = 0; blockIndex < blocks.Count; blockIndex++)
+                    {
+                        if (blockIndex > 0)
+                        {
+                            scheduleJson.Append(",");
+                        }
+                        scheduleJson.Append("\"").Append(EscapeJsonString(blocks[blockIndex].GroupId)).Append("\"");
+                    }
+                    scheduleJson.Append("]");
+
+                    AppendPropertyPrefix(scheduleJson, ref hasProperty, "assigned");
+                    scheduleJson.Append("[");
+                    bool hasAssigned = false;
+                    var assigned = schedule.GetAssigned();
+                    for (int assignedIndex = 0; assignedIndex < assigned.Count; assignedIndex++)
+                    {
+                        try
+                        {
+                            var schedulable = assigned[assignedIndex].Get();
+                            var identity = schedulable != null ? schedulable.GetComponent<MinionIdentity>() : null;
+                            if (identity == null)
+                            {
+                                continue;
+                            }
+                            if (hasAssigned)
+                            {
+                                scheduleJson.Append(",");
+                            }
+                            hasAssigned = true;
+                            scheduleJson.Append("\"").Append(EscapeJsonString(identity.name)).Append("\"");
+                        }
+                        catch (Exception e)
+                        {
+                            Debug.LogWarning("[OniAgent] Could not read a scheduled duplicant: " + e);
+                        }
+                    }
+                    scheduleJson.Append("]}");
+
+                    if (hasSchedule)
+                    {
+                        result.Append(",");
+                    }
+                    result.Append(scheduleJson);
+                    hasSchedule = true;
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("[OniAgent] Could not read schedule: " + e);
+                }
+            }
+
+            result.Append("]");
+            return result.ToString();
         }
 
         private static string BuildResearchJson(Research research, Db database)
@@ -2181,11 +2404,15 @@ namespace OniAgent
         public string Type;
         public string BuildingId;
         public string ResearchTechId;
+        public string ScheduleName;
         public int? X;
         public int? Y;
         public string Orientation;
         public List<string> Elements;
+        public List<string> ScheduleBlocks;
         public int? Priority;
+        public bool InvalidScheduleName;
+        public bool InvalidScheduleBlocks;
     }
 
     internal sealed class AgentCommandResult
@@ -2284,6 +2511,39 @@ namespace OniAgent
                 if (actionObject.TryGetValue("priority", out var priorityValue))
                 {
                     action.Priority = ReadInteger(priorityValue, "priority");
+                }
+                if (actionObject.TryGetValue("schedule", out var scheduleValue))
+                {
+                    if (scheduleValue is string scheduleName)
+                    {
+                        action.ScheduleName = scheduleName;
+                    }
+                    else
+                    {
+                        action.InvalidScheduleName = true;
+                    }
+                }
+                if (actionObject.TryGetValue("blocks", out var scheduleBlocksValue))
+                {
+                    var scheduleBlockValues = scheduleBlocksValue as List<object>;
+                    if (scheduleBlockValues == null)
+                    {
+                        action.InvalidScheduleBlocks = true;
+                    }
+                    else
+                    {
+                        action.ScheduleBlocks = new List<string>(scheduleBlockValues.Count);
+                        foreach (var scheduleBlockValue in scheduleBlockValues)
+                        {
+                            if (!(scheduleBlockValue is string scheduleBlock))
+                            {
+                                action.InvalidScheduleBlocks = true;
+                                action.ScheduleBlocks = null;
+                                break;
+                            }
+                            action.ScheduleBlocks.Add(scheduleBlock);
+                        }
+                    }
                 }
                 actions.Add(action);
             }

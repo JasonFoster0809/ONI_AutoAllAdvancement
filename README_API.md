@@ -258,3 +258,39 @@ The optional `power` object contains `battery_joules`,
 Water is already reported in `resources.clean_water_kg` using the verified
 `WorldContainer.worldInventory`, `WorldInventory.GetAmount(GameTags.Water,
 false)` APIs described above; no duplicate water block is needed.
+
+## Schedule API
+
+`ScheduleManager.Instance`, `GetSchedules()`, and
+`GetSchedule(Schedulable)` are public APIs in `ScheduleManager.cs` (lines 33
+and 235-252). `Schedulable.GetSchedule()` (`Schedulable.cs`, line 6) returns
+the schedule assigned to a duplicant. `Schedule.GetBlocks()` returns its
+blocks (`Schedule.cs`, line 212), and `GetCurrentScheduleBlock()` identifies
+the active block (line 44).
+
+Each `ScheduleBlock` exposes its `name`, `GroupId`, and `allowed_types`
+(`ScheduleBlock.cs`, lines 9-30). `ScheduleGroup` exposes `allowedTypes`
+(`ScheduleGroup.cs`, line 15), and `Schedule.SetBlockGroup(int, ScheduleGroup)`
+changes a block and notifies assigned duplicants (`Schedule.cs`, lines
+191-210). `Db.Get().ScheduleGroups.Get(id)` is used by the game to resolve
+block group IDs; the built-in groups are `Hygene`, `Worktime`, `Recreation`,
+and `Sleep` (`Database/ScheduleGroups.cs`). `ScheduleBlockTypes` defines
+`Sleep`, `Eat`, `Work`, `Hygiene`, and `Recreation` (`Database/ScheduleBlockTypes.cs`,
+lines 21-25). State can safely report each duplicant's assigned schedule and
+its block group IDs; the state array reports schedule names, all block group
+IDs, and assigned duplicant names. The `schedule` state cache refreshes every
+10 seconds.
+
+The action uses a schedule-name selector because schedules are shared by all
+assigned duplicants:
+`{"type":"schedule","schedule":"Default","blocks":[...]}`. The `blocks` array
+must contain exactly 24 known schedule-group IDs (`Hygene`, `Worktime`,
+`Recreation`, or `Sleep`). A selected schedule with other than 24 blocks is
+unavailable and is left unchanged. Reasons are `ok`, `invalid_blocks`,
+`unavailable`, or `error`.
+
+Valid example using the game's default group counts:
+
+```json
+{"id":"schedule-001","actions":[{"type":"schedule","schedule":"Default","blocks":["Hygene","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Recreation","Recreation","Sleep","Sleep","Sleep"]}]}
+```
