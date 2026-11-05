@@ -345,8 +345,9 @@ build or verify room walls.
 `rules.py` uses conservative automation heuristics, not game danger
 thresholds: oxygen below 50 g per sampled cell, less than 100 kcal on a dupe,
 stress at least 90, or an environment average outside 273.15-318.15 K triggers
-an emergency decision. A matching configured candidate can be selected;
-otherwise the decision is no-op and the LLM is skipped. `llm_chooser.py`
+an emergency decision before skill planning. The current `agent_main.py` does
+not configure emergency-specific repair candidates, so an emergency currently
+selects no-op and skips the LLM. `llm_chooser.py`
 contacts only the local Ollama endpoint at
 `http://localhost:11434/api/generate`, with model `qwen2.5-coder:3b` and
 temperature zero. Its returned ID must match a supplied candidate; failures

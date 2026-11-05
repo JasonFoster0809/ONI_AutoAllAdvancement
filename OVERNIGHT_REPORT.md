@@ -13,14 +13,16 @@
 | 7. Ưu tiên theo dupe | XONG | API `ChoreConsumer` được xác minh; state/action được thêm; build thành công. |
 | 8. Thư viện Python | XONG | Client, map, catalog và skill planners; kiểm tra cú pháp thành công; build thành công. |
 | 9. Rules và LLM | XONG | Luật deterministic, Ollama local bị giới hạn vào candidate ID, CLI và JSONL log; build thành công. |
-| 10. Kiểm thử offline | XONG | `python -m pytest -q`: **22 passed**; `dotnet build` thành công. |
+| 10. Kiểm thử offline | XONG | `python -m pytest -q`: **23 passed** ở lần xác minh cuối; `dotnet build` thành công. |
 | 11. Tài liệu cuối | XONG | Architecture, roadmap, playbook và báo cáo được cập nhật. |
 
 Không có mục API/build nào bị bỏ vì ba lần thất bại. Build `cancel` đầu tiên
 báo `CS1503` do `GameHashes.Cancel` là enum trong khi `Trigger` nhận `int`;
 đã sửa theo chữ ký đã xác minh và build tiếp theo thành công. Các lỗi ở lượt
 pytest đầu tiên là lỗi giả định trong test và một default argument giữ
-`LOG_PATH` cũ; đã sửa, toàn bộ 22 test sau đó đều qua.
+`LOG_PATH` cũ; đã sửa, toàn bộ 22 test sau đó đều qua. Rà soát cuối phát
+hiện thứ tự luật khẩn cấp chạy sau planner; đã chuyển lên trước planner và
+thêm test hồi quy, đưa tổng số test lên 23.
 
 ## Hành động C# và JSON để kiểm tra thủ công
 
@@ -87,8 +89,9 @@ Không có action game mới nào được thêm trong giai đoạn Python 8-11.
   kế hoạch bed + door, không dựng tường/không đảm bảo game ghi nhận room.
 - `agent.rules`: threshold 50 g/cell cho oxygen, 100 kcal cho đói, stress 90,
   và nhiệt độ 273.15-318.15 K là **heuristic của agent**, không phải ngưỡng
-  nguy hiểm đã xác minh trong game. Không có candidate an toàn cùng category
-  thì luật khẩn cấp trả no-op và chặn LLM.
+  nguy hiểm đã xác minh trong game. Luật được chạy trước khi tạo skill plan;
+  hiện chưa cấu hình hành động sửa chữa khẩn cấp nên nguy cơ sẽ trả no-op và
+  chặn LLM.
 - `agent.llm_chooser`: chỉ gửi candidate cho Ollama local
   `http://localhost:11434/api/generate`, model `qwen2.5-coder:3b`,
   temperature 0; ID không hợp lệ, JSON lỗi hoặc timeout đều fallback no-op.
@@ -109,7 +112,7 @@ python -m agent.agent_main --dry-run --max-steps 1 --bed-id <bed-id> --door-id <
 python -m agent.agent_main --dry-run --max-steps 1 --corridor 1,2,8,2
 ```
 
-`python -m pytest -q` đã chạy offline và cho kết quả `22 passed`. Ollama được
+`python -m pytest -q` đã chạy offline và cho kết quả `23 passed`. Ollama được
 mock trong test; chưa gọi Ollama thật.
 
 ## API game đã xác minh
@@ -158,6 +161,7 @@ Các phần không được thêm do thiếu API/state đã xác minh hoặc vì
 - `84403b5` — Add rule-based local action agent
 - `f34a707` — Add offline Python test coverage
 - Giai đoạn 11 — commit tài liệu cuối: hash được nêu trong câu trả lời hoàn tất.
+- Giai đoạn 9 follow-up — xử lý luật khẩn cấp trước planner: hash được nêu trong câu trả lời hoàn tất.
 
 **Tất cả code C# mới CHƯA được test thật trong game.** Python chỉ được test
 offline bằng fixture/mocks; chưa xác thực trao đổi file với game thật hoặc

@@ -19,9 +19,10 @@ Files in the ONI user data directory
 
 Python agent
   read state and check its modification time
-    → construct only configured skill plans from state + catalog
-    → apply deterministic emergency rules
-    → otherwise ask local Ollama to select one supplied candidate ID
+    → apply deterministic emergency rules before planning
+    → on an emergency, choose a configured matching action or safe no-op
+    → otherwise construct configured skill plans from state + catalog
+    → ask local Ollama to select one supplied candidate ID
     → send at most one command and wait for a result with the matching ID
     → append a JSON Lines record under logs/
 ```
@@ -49,8 +50,9 @@ without launching ONI or Ollama.
   `resources.materials` inventory. Material-dependent skills report
   `material_inventory_unavailable` until that data is available.
 - The emergency rules can select a configured candidate with a matching
-  category. When no such safe candidate exists, they select no-op and do not
-  let the LLM override the emergency decision.
+  category. The current main loop has no emergency-specific repair action
+  configured, so an emergency currently selects no-op before skills are
+  planned and does not let the LLM override that decision.
 - C# changes have build validation only; they have not been tested in a live
   game. Python behavior has offline tests only; the live file/game and Ollama
   integration has not been exercised.

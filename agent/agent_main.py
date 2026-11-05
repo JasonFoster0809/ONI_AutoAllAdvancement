@@ -133,19 +133,19 @@ def run(argv: Sequence[str] | None = None) -> int:
         try:
             state = read_state(args.data_dir)
             summary = _state_summary(state)
-            catalog = load_catalog(args.data_dir)
-            candidates = build_candidates(
-                state,
-                catalog,
-                bed_id=args.bed_id,
-                door_id=args.door_id,
-                research_center_id=args.research_center_id,
-                ladder_id=args.ladder_id,
-                corridor=args.corridor,
-            )
-            selected = choose_emergency_action(state, candidates) or choose_action(
-                state, candidates
-            )
+            selected = choose_emergency_action(state, [])
+            if selected is None:
+                catalog = load_catalog(args.data_dir)
+                candidates = build_candidates(
+                    state,
+                    catalog,
+                    bed_id=args.bed_id,
+                    door_id=args.door_id,
+                    research_center_id=args.research_center_id,
+                    ladder_id=args.ladder_id,
+                    corridor=args.corridor,
+                )
+                selected = choose_action(state, candidates)
             actions = selected.get("actions")
             if not isinstance(actions, list) or not actions:
                 result = {"reason": selected.get("reason", "no_action")}
