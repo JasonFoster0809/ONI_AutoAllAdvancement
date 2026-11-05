@@ -210,6 +210,50 @@ def _state_summary(state: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _rule_replay_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep the minimal state fields needed to re-evaluate registered rules."""
+    snapshot: dict[str, Any] = {}
+    for key in ("cycle", "oxygen_air", "environment", "alerts"):
+        if key in state:
+            snapshot[key] = state[key]
+    resources = state.get("resources")
+    if isinstance(resources, Mapping):
+        snapshot["resources"] = {
+            key: resources[key]
+            for key in ("food_kcal", "materials")
+            if key in resources
+        }
+    dupes = state.get("dupes")
+    if isinstance(dupes, list):
+        dupe_fields = (
+            "name", "x", "y", "calories_kcal", "stress",
+            "job_priorities", "room_type", "bed_x", "bed_y",
+        )
+        snapshot["dupes"] = [
+            {key: dupe[key] for key in dupe_fields if key in dupe}
+            if isinstance(dupe, Mapping)
+            else dupe
+            for dupe in dupes
+        ]
+    buildings = state.get("building_list")
+    if isinstance(buildings, list):
+        building_fields = ("id", "x", "y", "state", "stored")
+        snapshot["building_list"] = [
+            {key: building[key] for key in building_fields if key in building}
+            if isinstance(building, Mapping)
+            else building
+            for building in buildings
+        ]
+    world = state.get("world")
+    if isinstance(world, Mapping):
+        snapshot["world"] = {
+            key: world[key]
+            for key in ("origin", "start", "map")
+            if key in world
+        }
+    return snapshot
+
+
 def _append_log(entry: Mapping[str, Any], path: Path | None = None) -> None:
     destination = LOG_PATH if path is None else path
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -471,6 +515,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         rule_pending_expired: list[dict[str, str]] = []
         emergency_pending_expired: list[dict[str, str]] = []
         rule_decision: Mapping[str, Any] | None = None
+        rule_replay_input: Mapping[str, Any] | None = None
         manager_plan: list[dict[str, Any]] | None = None
         catalog: list[dict[str, Any]] = []
         cycle: int | None = None
@@ -618,6 +663,21 @@ def run(argv: Sequence[str] | None = None) -> int:
                     cooldowns=rule_cooldowns,
                     executors=rule_executors,
                 )
+                rule_replay_input = {
+                    "state": _rule_replay_state(state),
+                    "history": [_rule_replay_state(sample) for sample in rule_history],
+                    "pending": _copy_pending(rule_pending),
+                    "cooldowns": dict(rule_cooldowns),
+                    "skill_config": {
+                        key: config.get(key)
+                        for key in (
+                            "bed_id",
+                            "door_id",
+                            "tile_id",
+                            "barracks_bed_count",
+                        )
+                    },
+                }
                 chosen_rule = rule_decision["selected"]
                 if chosen_rule is not None:
                     rule_id = chosen_rule["rule_id"]
@@ -761,6 +821,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             "pending": _copy_pending(pending),
             "pending_expired": pending_expired,
             "rule_evaluation": rule_decision,
+            "rule_replay_input": rule_replay_input,
             "rule_pending": _copy_pending(rule_pending),
             "rule_pending_expired": rule_pending_expired,
             "rule_cooldowns": rule_cooldowns,
