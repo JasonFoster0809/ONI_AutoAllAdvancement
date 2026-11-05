@@ -23,6 +23,11 @@ Python agent
     → optional local Qwen tie-breaker selects only a supplied goal candidate
     → preserve --dry-run or send the selected action batch
     → track pending actions, cycle cooldowns, reasons, and results in JSONL
+
+Offline diagnostics
+  logs/agent.jsonl + current state ───► diagnostics.md
+  logs/agent.jsonl + recorded rule inputs/catalog ───► replay comparison
+  logs/agent.jsonl ───► --report ───► logs/metrics.json
 ```
 
 The mod processes game state and command actions from the `Game.Update`
@@ -49,6 +54,10 @@ one rotated `.1` backup.
   actions at 12 per turn. Its validated phase metadata labels cycles 0–9 as
   `early`, 10–29 as `growth`, and 30–99 as `midgame`; the phase is reported,
   not used to filter planner goals.
+- Rule cycle gates can schedule a water pump/wash basin and one PlanterBox in
+  cycles 10–29, then one MassageTable and StorageLocker in cycles 30–99.
+  These are catalog/inventory checked plans, not proof the colony's needs or
+  room/power conditions are satisfied.
 - If no rule selects a skill, the existing planner executes the highest-ranked
   enabled goal. `--manager qwen` retains the local Ollama tie-break behavior;
   `--manager none` disables both optional goal managers. The default remains
@@ -56,9 +65,21 @@ one rotated `.1` backup.
 - Skills are planning-only and use catalog IDs, unlock flags, construction
   masses, and `resources.materials`. They do not send commands directly.
   Implemented plans include oxygen setup, a tiled Latrine footprint, a
-  DiningTable mess area, a ManualGenerator/Wire/Battery layout, and the
-  existing Barracks and research planners.
+  DiningTable mess area, a ManualGenerator/Wire/Battery layout,
+  LiquidPumpingStation/WashBasin water setup, PlanterBox, MassageTable,
+  StorageLocker, and the existing Barracks and research planners.
 - `--dry-run` prints and logs proposed actions without writing command files.
+- `agent.diagnostics` emits a Markdown report from the agent log and one
+  current state snapshot. Trend checks require telemetry in recent logs;
+  older sparse summaries return `unknown`, and the report does not infer a
+  cause of death.
+- `agent.replay` recomputes rule decisions only for entries that contain the
+  recorded rule state, history, pending set, and cooldown context. Old entries
+  without that context are `unavailable`; replay also depends on the supplied
+  catalog matching the one used for planning.
+- `agent_main --report` aggregates measurable outcomes into
+  `logs/metrics.json`. The reported cycle is the latest observed, not a
+  confirmed death cycle; dry-run entries have no command result counts.
 
 The Gemini manager receives only `cycle`, dupe count, local oxygen average,
 food calories, and the allow-listed goal descriptions. It does not receive
@@ -80,6 +101,15 @@ remains local at `http://localhost:11434/api/generate`.
   inside the Outhouse.
 - `build_power_basic` lays out catalog-verified generator, wire, and battery
   footprints. Its runtime circuit behavior is **CHƯA TEST TRONG GAME**.
+- `build_water_setup` uses `L` cells in the map as a proximity heuristic for
+  the pump and warns that the WashBasin needs water delivery. Map adjacency
+  is not a verified guarantee of successful pumping.
+- `build_food_basic` plans only one unlocked PlanterBox; seeds, crop choice,
+  planting, and harvested food are not automated. MassageTable's power
+  requirement is code-verified, but this skill does not create a circuit.
+- Optional `operational_flags` state is derived from verified
+  `Operational.Flags` entries. Its C# serialization is build-validated only:
+  **CHƯA TEST TRONG GAME**.
 - Rule pending/cooldown state is kept in agent memory for the current process.
   The existing planner's pending build acknowledgements remain separate.
 - The `Game.Update`, `BuildingComplete.OnSpawn`, and

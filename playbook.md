@@ -194,3 +194,36 @@ must remain conservative until its per-building storage field is present.
 All new build plans and event logging are offline/build validated only. Do
 not rely on room recognition, circuit power, delivery timing, or event
 ordering until they are tested in a disposable colony.
+
+## Part 2: water, food, recreation, and storage plans
+
+- `build_water_setup` uses the catalog's unlocked `LiquidPumpingStation` and
+  `WashBasin`, checks their construction masses against `resources.materials`,
+  and only plans a pump when the map contains a liquid (`L`) cell. It places
+  the pump footprint near that cell as a conservative map heuristic, then
+  finds floor-supported space for the basin. This adjacency rule is not a
+  verified guarantee of liquid pumping; test it in a disposable colony.
+  WashBasin also needs a delivery of Water. No fixed source rate or required
+  water supply quantity is assumed.
+- `build_food_basic` selects the unlocked, catalog-listed `PlanterBox`.
+  The decompiled `PlanterBoxConfig` identifies it as a 1x1 Farmable floor
+  building with `PlantablePlot` and crop-seed deposit tags. The plan does not
+  choose seeds, plant, or guarantee harvest; seed/crop readiness is
+  **TODO_VERIFY**. If PlanterBox is missing or locked, the skill reports
+  `TODO_NOT_IMPLEMENTED_food_building_unavailable`.
+- `build_recreation` plans one unlocked `MassageTable` after inventory and
+  floor checks. `MassageTableConfig` marks it as requiring power and tags it
+  as a de-stressing building; power connection and actual use are
+  **CHƯA TEST TRONG GAME**.
+- `build_storage_area` plans one unlocked `StorageLocker`; it does not set
+  accepted materials or assign duplicant storage priorities.
+- The new rules schedule water and planter plans during cycles 10–29 and
+  recreation/storage during cycles 30–99. They are count/phase policies,
+  not needs-based production-rate calculations.
+- To generate a read-only diagnosis, run
+  `python -m agent.diagnostics --logs logs/agent.jsonl --state <state.json>`.
+  To compare recorded rule decisions, run
+  `python -m agent.replay --logs logs/agent.jsonl --catalog <oni_catalog.json>`.
+  Older logs without recorded rule inputs cannot be replayed. Run
+  `python -m agent.agent_main --report` to write `logs/metrics.json`; observed
+  cycle is not a confirmed death cycle.

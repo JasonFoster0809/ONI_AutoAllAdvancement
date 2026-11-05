@@ -777,3 +777,79 @@ kiểm thử game cần người dùng làm trong colony thử nghiệm: xác nh
 hook/order và rotation, nhận diện Latrine, giao Dirt/Water, power circuit,
 Algae throughput, và hành vi action/build thực tế. Không có cùng một lỗi lặp
 lại ba lần.
+
+## PHẦN 2
+
+Thời gian theo timestamp commit, múi giờ `+07:00`. Mỗi mục kỹ thuật có
+commit riêng trên `overnight-1`; không push. Các bước Python chỉ chạy
+pytest; C# mới được build, không chạy trong game.
+
+| Thời gian | Trạng thái | Việc | Pytest | dotnet build | Commit |
+|---|---|---|---|---|---|
+| 2026-11-06 00:59:32 | XONG | Thêm `agent/diagnostics.py`: báo cáo Markdown về stress/oxy trends, Algae đã biết, build blocked lặp và research kẹt; thêm telemetry tối thiểu cho log mới. Log cũ thiếu trường thì báo unknown. Báo cáo không khẳng định nguyên nhân chết. | 15 passed (diagnostics + agent main) | Không áp dụng (Python-only) | `48513c5` |
+| 2026-11-06 01:01:12 | XONG | Thêm `tests/sim_state.py` và 5 dry-run end-to-end: oxygen giảm liên tục, oxygen phục hồi, máy hết Algae, stress cao, thiếu telemetry. Không gửi command thật. | 5 passed | Không áp dụng (Python-only) | `5344140` |
+| 2026-11-06 01:04:49 | XONG | Thêm water (LiquidPumpingStation + WashBasin), food (PlanterBox), recreation (MassageTable), storage (StorageLocker); kiểm tra catalog/unlock/mass/inventory/map; tests map giả. PlanterBox không bảo đảm có seed/thu hoạch; vị trí pump gần liquid là heuristic. | 26 passed (`test_skills.py`) | Không áp dụng (Python-only) | `540ad6f` |
+| 2026-11-06 01:05:38 | XONG | Thêm growth rules cycle 10–29 cho water/food, midgame 30–99 cho recreation/storage; `--validate` và phase/skill tests. Không thêm ngưỡng tiêu thụ chưa có bằng chứng. | 22 passed (`test_rule_engine.py`) | Không áp dụng (Python-only) | `e591c05` |
+| 2026-11-06 01:07:29 | XONG | Thêm `agent/replay.py`; rule log có state/history/pending/cooldown được chạy lại và so sánh action. Log cũ thiếu context được ghi unavailable; catalog có thể đã đổi. | 15 passed (replay + agent main) | Không áp dụng (Python-only) | `54ae792` |
+| 2026-11-06 01:08:18 | XONG | Thêm `agent/metrics.py` và `agent_main --report`, ghi `logs/metrics.json`: cycle mới nhất quan sát được, command ok/blocked, average seconds/cycle nếu đo được, dupe count mới nhất. | 15 passed (metrics + agent main) | Không áp dụng (Python-only) | `7a04d99` |
+| 2026-11-06 01:10:43 | XONG | Xác minh `Operational.Flags`, `Flag.Name`/`FlagType` bằng `ilspycmd`; thêm tùy chọn `operational_flags:[{name,satisfied}]` vào building đã xây, trên main thread, với catch riêng. Chỉ build, không chạy game. | Full suite sau đó: 125 passed | Build succeeded, 0 warnings, 0 errors sau khi sửa lỗi cú pháp ban đầu | `6e87e4e` |
+| 2026-11-06 01:11 | XONG | Cleanup check và đồng bộ README/API, architecture, roadmap, playbook. `.gitignore` chặn `.env`, `.env.*`, `*key*`, `*.sav`; `git diff --check` sạch. Full test/build đã chạy trên commit `6e87e4e`. | 125 passed | Build succeeded, 0 warnings, 0 errors | Sẽ ghi hash commit sau khi commit |
+| Pending | CHƯA XONG | Bước 9: pytest bổ sung cho nhánh lỗi `oni_client.py`/`rule_engine.py`, rồi refactor nhỏ nếu an toàn. | Pending | Không áp dụng nếu Python-only | Pending |
+
+### Xác minh ID và quyết định bảo thủ
+
+- Các ID `LiquidPumpingStation`, `WashBasin`, `PlanterBox`, `MassageTable`
+  và `StorageLocker` có trong `oni_catalog.json` cục bộ; lúc xác minh đều
+  unlocked. Đã kiểm tra `PlanterBoxConfig`, `MassageTableConfig`,
+  `LiquidPumpingStationConfig`, `StorageLockerConfig` bằng `ilspycmd`.
+  Food skill chỉ chọn PlanterBox; nếu thiếu/locked, ghi
+  `TODO_NOT_IMPLEMENTED_food_building_unavailable`.
+- `PlanterBox` cần crop seed/planting để tạo cây; tự chọn seed và bảo đảm
+  thu hoạch **TODO_VERIFY**. `MassageTable` cần điện theo cấu hình game;
+  skill không tạo circuit. Pump đặt gần map cell `L`, nhưng hiệu quả bơm cần
+  kiểm chứng trong game. WashBasin cần giao Water. Không giả định rate sản
+  xuất/tiêu thụ mới.
+- `diagnostics` đọc `agent.jsonl` và snapshot state truyền vào. Log cũ
+  không có stress/Algae/research-progress; các xu hướng đó sẽ là unknown.
+  Báo cáo không xác định nguyên nhân tử vong.
+- Replay thêm `rule_replay_input` để phát lại rules, gồm history/pending/
+  cooldown. Log cũ không có dữ liệu này sẽ unavailable. Catalog khi replay
+  phải khớp với lúc lập kế hoạch để kỳ vọng action giống nhau.
+- Metrics cycle là cycle quan sát cuối, không phải cycle tử vong. Command
+  counts chỉ có khi log có kết quả; dry-run không tính thành công/thất bại.
+- Step 7 có một build fail cú pháp vì đặt method trước catch hiện hữu. Đã
+  sửa vị trí; build sau đó thành công 0 warning/0 error. Không có cùng lỗi
+  lặp ba lần.
+
+### Lệnh kiểm tra PHẦN 2
+
+```powershell
+python -m agent.diagnostics --logs logs/agent.jsonl --state <state.json>
+python -m agent.replay --logs logs/agent.jsonl --catalog <oni_catalog.json>
+python -m agent.agent_main --report
+python -m agent.rule_engine --validate
+python -m pytest -q
+dotnet build OniAgent.csproj --no-restore
+git check-ignore -v -- .env .env.local sample-key.json test.sav
+```
+
+### VIỆC CẦN NGƯỜI DÙNG TEST TRONG GAME
+
+- Trường C# mới `operational_flags`: trong colony thử nghiệm, so sánh
+  `operational` với từng `{name,satisfied}`; kiểm tra building đang hoạt động
+  và không hoạt động/thiếu điện. Xác nhận lỗi đọc một field không làm mất
+  building khỏi `building_list`, và cache vẫn khoảng 10 giây. Trường mới
+  **CHƯA TEST TRONG GAME**.
+- Event journal C# trước đó cũng **CHƯA TEST TRONG GAME**: hoàn tất một
+  building và quan sát `building_completed`; trong colony bỏ đi mới kiểm
+  tra `dupe_died`; vượt ngưỡng stress để quan sát `dupe_stress_threshold`;
+  đổi chore để quan sát `chore_changed`; xác nhận append trên main-thread
+  update và rotation sau khi file vượt 5 MiB.
+- Build plans: kiểm tra LiquidPumpingStation gần liquid, giao Water cho
+  WashBasin, PlanterBox từ seed tới thu hoạch, MassageTable có điện,
+  StorageLocker footprint, và rules ở biên cycle 10/30/100. Không dùng save
+  quan trọng để kiểm thử.
+
+**Không chạy game, deploy, copy DLL, sửa save hoặc push.** Không có key/token
+hay save nào được thêm vào repo. Kết quả kiểm thử và thời gian ở trên là
+kiểm tra offline.
