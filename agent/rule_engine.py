@@ -339,6 +339,7 @@ def phase_for_cycle(document: Mapping[str, Any], cycle: int | None) -> str | Non
 def explain_rules(
     state: Mapping[str, Any],
     *,
+    catalog: Sequence[Mapping[str, Any]] = (),
     document: Mapping[str, Any] | None = None,
     history: Sequence[Mapping[str, Any]] = (),
     pending: Mapping[str, Any] | None = None,
@@ -417,7 +418,7 @@ def explain_rules(
         actions = list(
             executor_map[skill](
                 state,
-                (),
+                catalog,
                 selected_rule["then"].get("args", {}),
             )
         )

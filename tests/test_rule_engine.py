@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from agent import agent_main
 from agent.rule_engine import (
     RuleValidationError,
     explain_rules,
@@ -81,6 +82,46 @@ def test_state_aware_rules_keep_unavailable_bed_and_storage_unknown():
     reasons = {item["rule_id"]: item for item in result["reasons"]}
     assert reasons["barracks-dupe-unassigned-bed"]["status"] == "unknown"
     assert reasons["deoxidizer-algae-empty"]["status"] == "unknown"
+
+
+def test_hunger_rule_uses_existing_food_priority_actions():
+    state = {
+        "dupes": [
+            {
+                "name": "Fixture Dupe",
+                "calories_kcal": 50,
+                "job_priorities": {"Farming": 2, "Cook": 3, "Ranching": 1},
+            }
+        ],
+        "building_list": [],
+    }
+    result = explain_rules(
+        state,
+        executors=agent_main._rule_skill_executors(agent_main.DEFAULT_CONFIG),
+    )
+    selected = result["selected"]
+    assert selected["rule_id"] == "critical-dupe-hunger"
+    assert selected["status"] == "matched"
+    assert selected["actions"] == [
+        {
+            "type": "set_dupe_priority",
+            "dupe": "Fixture Dupe",
+            "group": "Farming",
+            "priority": 4,
+        },
+        {
+            "type": "set_dupe_priority",
+            "dupe": "Fixture Dupe",
+            "group": "Cook",
+            "priority": 4,
+        },
+        {
+            "type": "set_dupe_priority",
+            "dupe": "Fixture Dupe",
+            "group": "Ranching",
+            "priority": 4,
+        },
+    ]
 
 
 def test_stored_mass_aggregates_devices_and_accepts_legacy_mapping():

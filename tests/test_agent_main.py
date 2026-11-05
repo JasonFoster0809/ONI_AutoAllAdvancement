@@ -113,7 +113,7 @@ def test_dry_run_writes_jsonl_without_sending(tmp_path, monkeypatch, capsys):
 
     entry = json.loads(log_path.read_text(encoding="utf-8").strip())
     assert entry["goal_id"] == "research_target"
-    assert entry["selection_reason"] == "rule"
+    assert entry["selection_reason"] == "planner"
     assert entry["result"]["reason"] == "dry_run"
     assert entry["result"]["actions"] == [
         {"type": "set_research", "tech": "FarmingTech"}
@@ -156,6 +156,13 @@ def test_emergency_rule_runs_before_catalog_or_skills(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         agent_main,
+        "plan_goals",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("emergency must skip the Gemini manager")
+        ),
+    )
+    monkeypatch.setattr(
+        agent_main,
         "next_step",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("emergency must take priority over the planner")
@@ -163,7 +170,7 @@ def test_emergency_rule_runs_before_catalog_or_skills(tmp_path, monkeypatch):
     )
 
     assert agent_main.run(
-        ["--max-steps", "1", "--data-dir", str(tmp_path)]
+        ["--max-steps", "1", "--data-dir", str(tmp_path), "--manager", "gemini"]
     ) == 0
     entry = json.loads(log_path.read_text(encoding="utf-8").strip())
     assert entry["goal_id"] == "emergency"
@@ -272,7 +279,7 @@ def test_llm_is_called_only_for_same_rank_goal_tie(tmp_path, monkeypatch, capsys
     assert len(llm_calls) == 1
     assert llm_calls[0] == ["first", "second", "no_op"]
     assert entry["goal_id"] == "second"
-    assert entry["selection_reason"] == "llm"
+    assert entry["selection_reason"] == "qwen"
 
 
 def _write_emergency_inputs(tmp_path, state_name="emergency_oxygen_state.json"):
@@ -451,3 +458,181 @@ def test_emergency_action_limit_caps_food_priority_actions(tmp_path, monkeypatch
     assert len(entry["actions"]) == 4
     assert all(action["type"] == "set_dupe_priority" for action in entry["actions"])
     assert any(item["reason"] == "emergency_action_limit" for item in entry["skipped"])
+
+
+def _rule_test_state():
+    rows = ["." * 41 for _ in range(40)] + ["#" * 41]
+    return {
+        "cycle": 10,
+        "trigger": 1,
+        "dupes": [],
+        "resources": {
+            "food_kcal": 10000,
+            "materials": {"ZincOre": 1000, "SandStone": 10000},
+        },
+        "oxygen_air": 1000,
+        "alerts": [],
+        "building_list": [],
+        "world": {
+            "map": rows,
+            "origin": {"x": -20, "y": -20},
+            "start": {"x": 0, "y": 0},
+        },
+    }
+
+
+def _one_oxygen_rule():
+    return {
+        "phases": [],
+        "rules": [
+            {
+                "id": "test-oxygen",
+                "priority": 100,
+                "when": {"op": "eq", "path": "trigger", "value": 1},
+                "then": {"skill": "build_oxygen_setup", "args": {}},
+                "cooldown_cycles": 2,
+                "pending": 2,
+                "requires": ["build_oxygen_setup"],
+            }
+        ],
+    }
+
+
+def _run_skill_config():
+    return {
+        **agent_main.DEFAULT_CONFIG,
+        "bed_id": "Bed",
+        "door_id": "Door",
+        "tile_id": "Tile",
+        "oxygen_consecutive_readings": 3,
+    }
+
+
+def test_rule_engine_executes_skill_with_live_catalog_and_dry_run(tmp_path, monkeypatch):
+    state = _rule_test_state()
+    fixture_path = Path(__file__).parent / "fixtures" / "construction_skills_catalog.json"
+    catalog = json.loads(fixture_path.read_text(encoding="utf-8"))
+    log_path = tmp_path / "logs" / "agent.jsonl"
+    monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
+    monkeypatch.setattr(agent_main, "read_state", lambda _root: state)
+    monkeypatch.setattr(agent_main, "load_catalog", lambda _root: catalog)
+    monkeypatch.setattr(agent_main, "load_agent_config", lambda _path: _run_skill_config())
+    monkeypatch.setattr(agent_main, "load_rules", _one_oxygen_rule)
+    monkeypatch.setattr(agent_main, "time", _no_sleep_time())
+    monkeypatch.setattr(
+        agent_main,
+        "send_command",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("dry-run must not send rule-engine actions")
+        ),
+    )
+
+    assert agent_main.run(
+        ["--dry-run", "--max-steps", "1", "--manager", "none"]
+    ) == 0
+
+    entry = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert entry["selection_reason"] == "rule_engine"
+    assert entry["rule_evaluation"]["selected"]["rule_id"] == "test-oxygen"
+    assert [action["id"] for action in entry["actions"]] == ["MineralDeoxidizer"]
+    assert entry["rule_cooldowns"] == {"test-oxygen": 10}
+
+
+def test_rule_pending_blocks_resent_build_actions(tmp_path, monkeypatch):
+    state = _rule_test_state()
+    catalog = json.loads(
+        (Path(__file__).parent / "fixtures" / "construction_skills_catalog.json")
+        .read_text(encoding="utf-8")
+    )
+    log_path = tmp_path / "logs" / "agent.jsonl"
+    monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
+    monkeypatch.setattr(agent_main, "read_state", lambda _root: state)
+    monkeypatch.setattr(agent_main, "load_catalog", lambda _root: catalog)
+    monkeypatch.setattr(agent_main, "load_agent_config", lambda _path: _run_skill_config())
+    monkeypatch.setattr(agent_main, "load_rules", _one_oxygen_rule)
+    monkeypatch.setattr(agent_main, "time", _no_sleep_time())
+    monkeypatch.setattr(
+        agent_main,
+        "next_step",
+        lambda *args, **kwargs: {"goal_id": "no_goal", "actions": [], "skipped": []},
+    )
+    sent = []
+
+    def accept_actions(actions, _root):
+        sent.append(list(actions))
+        return {"results": [{"type": action["type"], "ok": True} for action in actions]}
+
+    monkeypatch.setattr(agent_main, "send_command", accept_actions)
+
+    assert agent_main.run(
+        ["--max-steps", "2", "--manager", "none"]
+    ) == 0
+
+    entries = [
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(sent) == 1
+    assert sent[0][0]["id"] == "MineralDeoxidizer"
+    assert entries[1]["rule_evaluation"]["reasons"][0]["reason"] == "pending"
+
+
+def test_gemini_goal_plan_controls_planner_and_is_cached_by_cycle(tmp_path, monkeypatch):
+    state = {
+        "cycle": 10,
+        "dupes": [],
+        "resources": {"food_kcal": 10000},
+        "oxygen_air": 1000,
+        "alerts": [],
+    }
+    log_path = tmp_path / "logs" / "agent.jsonl"
+    monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
+    monkeypatch.setattr(agent_main, "read_state", lambda _root: state)
+    monkeypatch.setattr(agent_main, "load_catalog", lambda _root: [])
+    monkeypatch.setattr(agent_main, "load_agent_config", lambda _path: _run_skill_config())
+    monkeypatch.setattr(agent_main, "load_rules", lambda: {"phases": [], "rules": []})
+    monkeypatch.setattr(agent_main, "time", _no_sleep_time())
+    manager_calls = []
+
+    def gemini_plan(_state, goals):
+        manager_calls.append(goals)
+        return [{"id": "barracks", "horizon_cycles": 5}]
+
+    monkeypatch.setattr(agent_main, "plan_goals", gemini_plan)
+    planner_calls = []
+
+    def next_step(state, catalog, config, pending, *, enabled_goals, alternatives):
+        planner_calls.append((list(enabled_goals), dict(config["goal_ranks"])))
+        return {
+            "goal_id": "barracks",
+            "actions": [{"type": "set_research", "tech": "FixtureTech"}],
+            "skipped": [],
+        }
+
+    monkeypatch.setattr(agent_main, "next_step", next_step)
+    monkeypatch.setattr(
+        agent_main,
+        "send_command",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("dry-run must not send manager-selected actions")
+        ),
+    )
+
+    assert agent_main.run(
+        [
+            "--dry-run",
+            "--max-steps",
+            "2",
+            "--manager",
+            "gemini",
+            "--interval-seconds",
+            "0.001",
+        ]
+    ) == 0
+
+    entries = [
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(manager_calls) == 1
+    assert planner_calls == [(["barracks"], {"barracks": 0})] * 2
+    assert all(entry["selection_reason"] == "gemini" for entry in entries)
+    assert all(entry["manager_plan"][0]["horizon_cycles"] == 5 for entry in entries)

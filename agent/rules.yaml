@@ -17,11 +17,15 @@
     {
       "id": "critical-dupe-hunger",
       "priority": 95,
-      "when": {"op": "lt", "path": "dupes.0.calories_kcal", "value": 100},
-      "then": {"skill": "build_mess_area", "args": {}},
+      "when": {
+        "op": "any_item",
+        "path": "dupes",
+        "where": {"op": "lt", "path": "calories_kcal", "value": 100}
+      },
+      "then": {"skill": "food_emergency", "args": {}},
       "cooldown_cycles": 1,
       "pending": 1,
-      "requires": ["build_mess_area"]
+      "requires": ["food_emergency"]
     },
     {
       "id": "high-stress",

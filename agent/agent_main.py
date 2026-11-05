@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from .catalog import CatalogError, load_catalog
+from . import planner as planner_module
 from .llm_chooser import choose_action
+from .gemini_manager import plan_goals
 from .oni_client import read_state, send_command
 from .planner import (
     mark_pending,
@@ -22,8 +24,18 @@ from .planner import (
     registered_goal_ids,
     update_pending,
 )
+from .rule_engine import explain_rules, load_rules
 from .rules import detect_emergency, oxygen_value
-from .skills import plan_emergency_actions
+from .skills import (
+    SkillPlan,
+    SkillPlanningError,
+    build_barracks,
+    build_mess_area,
+    build_oxygen_setup,
+    build_power_basic,
+    build_toilet_room,
+    plan_emergency_actions,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -135,6 +147,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--interval-seconds", type=float, default=2.0)
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    parser.add_argument(
+        "--manager",
+        choices=("none", "qwen", "gemini"),
+        default="qwen",
+        help="goal manager; qwen preserves the existing tie-break behavior",
+    )
     parser.add_argument("--barracks-bed-count", type=int)
     parser.add_argument("--tile-id")
     parser.add_argument(
@@ -235,6 +253,98 @@ def _accepted_emergency_actions(
     ]
 
 
+def _rule_skill_executors(config: Mapping[str, Any]) -> dict[str, Any]:
+    def run_skill(
+        skill_name: str,
+        skill: Any,
+        state: Mapping[str, Any],
+        catalog: Sequence[Mapping[str, Any]],
+        _args: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        try:
+            if skill_name == "build_barracks":
+                actions = skill(
+                    state,
+                    catalog,
+                    config.get("bed_id"),
+                    config.get("door_id"),
+                    config.get("tile_id"),
+                    config.get("barracks_bed_count", 4),
+                )
+                return list(actions)
+            if skill_name == "food_emergency":
+                plan = plan_emergency_actions(state, catalog, "food", "dupe_hungry")
+                for item in plan["skipped"]:
+                    LOGGER.warning("Skill %s skipped: %s", skill_name, item["reason"])
+                return list(plan["actions"])
+            plan = skill(state, catalog)
+            if isinstance(plan, SkillPlan):
+                for warning in plan.warnings:
+                    LOGGER.warning("Skill %s: %s", skill_name, warning)
+                return list(plan.actions)
+            return list(plan)
+        except SkillPlanningError as error:
+            LOGGER.warning("Skill %s skipped: %s", skill_name, error.reason)
+            return []
+
+    skills = {
+        "build_barracks": build_barracks,
+        "build_oxygen_setup": build_oxygen_setup,
+        "build_mess_area": build_mess_area,
+        "build_toilet_room": build_toilet_room,
+        "build_power_basic": build_power_basic,
+    }
+    executors = {
+        name: (
+            lambda state, catalog, args, skill_name=name, skill=skill:
+                run_skill(skill_name, skill, state, catalog, args)
+        )
+        for name, skill in skills.items()
+    }
+    executors["food_emergency"] = lambda state, catalog, args: run_skill(
+        "food_emergency", None, state, catalog, args
+    )
+    return executors
+
+
+def _update_rule_pending(
+    state: Mapping[str, Any],
+    pending: dict[str, dict[str, Any]],
+    cycle: int | None,
+    rules_document: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+) -> list[dict[str, str]]:
+    expired: list[dict[str, str]] = []
+    if cycle is None:
+        return expired
+
+    pending_cycles = {
+        rule["id"]: rule["pending"]
+        for rule in rules_document["rules"]
+    }
+    for rule_id, item in list(pending.items()):
+        submitted_cycle = item.get("submitted_step")
+        if not isinstance(submitted_cycle, int) or cycle < submitted_cycle:
+            del pending[rule_id]
+            expired.append({"rule_id": rule_id, "reason": "cycle_unavailable_or_rewound"})
+            continue
+        one_rule = {rule_id: item}
+        expired_items = update_pending(
+            state,
+            one_rule,
+            cycle,
+            pending_cycles.get(rule_id, 1),
+            catalog,
+        )
+        if rule_id not in one_rule:
+            del pending[rule_id]
+        else:
+            pending[rule_id] = one_rule[rule_id]
+        if expired_items:
+            expired.append({"rule_id": rule_id, "reason": "pending_expired"})
+    return expired
+
+
 def run(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -244,12 +354,19 @@ def run(argv: Sequence[str] | None = None) -> int:
     if args.tile_id is not None:
         config["tile_id"] = args.tile_id
     enabled_goals = args.goals or registered_goal_ids()
+    rules_document = load_rules()
+    rule_executors = _rule_skill_executors(config)
     oxygen_history: deque[bool] = deque(
         maxlen=config["oxygen_consecutive_readings"]
     )
+    rule_history: deque[Mapping[str, Any]] = deque(maxlen=3)
     pending: dict[str, dict[str, Any]] = {}
+    rule_pending: dict[str, dict[str, Any]] = {}
+    rule_cooldowns: dict[str, int] = {}
     emergency_pending: dict[str, dict[str, Any]] = {}
     emergency_cooldowns: dict[str, int] = {}
+    cached_manager_goals: list[dict[str, Any]] | None = None
+    manager_plan_expires_cycle: int | None = None
     step = 0
 
     while args.max_steps == 0 or step < args.max_steps:
@@ -260,7 +377,10 @@ def run(argv: Sequence[str] | None = None) -> int:
         selection_reason = "rule"
         result: Mapping[str, Any] = {"reason": "no_goal"}
         pending_expired: list[dict[str, Any]] = []
+        rule_pending_expired: list[dict[str, str]] = []
         emergency_pending_expired: list[dict[str, str]] = []
+        rule_decision: Mapping[str, Any] | None = None
+        manager_plan: list[dict[str, Any]] | None = None
         catalog: list[dict[str, Any]] = []
         cycle: int | None = None
 
@@ -286,6 +406,14 @@ def run(argv: Sequence[str] | None = None) -> int:
                 cycle,
                 config["emergency_pending_cycles"],
             )
+            rule_pending_expired = _update_rule_pending(
+                state,
+                rule_pending,
+                cycle,
+                rules_document,
+                catalog,
+            )
+            rule_history.append(state)
             for expired in pending_expired:
                 LOGGER.warning(
                     "Pending goal %s expired after %d steps",
@@ -295,6 +423,12 @@ def run(argv: Sequence[str] | None = None) -> int:
             for expired in emergency_pending_expired:
                 LOGGER.warning(
                     "Emergency %s pending actions expired", expired["category"]
+                )
+            for expired in rule_pending_expired:
+                LOGGER.warning(
+                    "Rule %s pending actions expired: %s",
+                    expired["rule_id"],
+                    expired["reason"],
                 )
 
             emergency = detect_emergency(
@@ -348,16 +482,86 @@ def run(argv: Sequence[str] | None = None) -> int:
                 }
                 selection_reason = "rule"
             else:
-                tied_steps: list[dict[str, Any]] = []
-                selected = next_step(
+                manager_goal_ids = enabled_goals
+                manager_config = config
+                if args.manager == "gemini":
+                    if cycle is None:
+                        LOGGER.warning("Gemini manager skipped: cycle is unavailable")
+                    elif (
+                        cached_manager_goals is not None
+                        and manager_plan_expires_cycle is not None
+                        and cycle < manager_plan_expires_cycle
+                    ):
+                        manager_plan = cached_manager_goals
+                    else:
+                        goal_descriptions = [
+                            {"id": goal.id, "description": goal.description}
+                            for goal in planner_module.GOALS
+                            if goal.id in enabled_goals
+                        ]
+                        manager_plan = plan_goals(state, goal_descriptions)
+                        cached_manager_goals = manager_plan
+                        if manager_plan is not None:
+                            horizons = [
+                                item["horizon_cycles"]
+                                for item in manager_plan
+                            ]
+                            manager_plan_expires_cycle = cycle + min(horizons, default=5)
+
+                    if manager_plan is not None:
+                        manager_goal_ids = [item["id"] for item in manager_plan]
+                        manager_config = {
+                            **config,
+                            "goal_ranks": {
+                                goal_id: rank
+                                for rank, goal_id in enumerate(manager_goal_ids)
+                            },
+                        }
+
+                rule_decision = explain_rules(
                     state,
-                    catalog,
-                    config,
-                    pending,
-                    enabled_goals=enabled_goals,
-                    alternatives=tied_steps,
+                    catalog=catalog,
+                    document=rules_document,
+                    history=tuple(rule_history),
+                    pending=rule_pending,
+                    cooldowns=rule_cooldowns,
+                    executors=rule_executors,
                 )
-                if tied_steps:
+                chosen_rule = rule_decision["selected"]
+                if chosen_rule is not None:
+                    rule_id = chosen_rule["rule_id"]
+                    actions = list(chosen_rule.get("actions", []))
+                    reason = chosen_rule["reason"]
+                    if cycle is None:
+                        actions = []
+                        reason = "cycle_unavailable"
+                    else:
+                        rule_cooldowns[rule_id] = cycle
+                    skipped = []
+                    if chosen_rule["status"] != "matched":
+                        skipped.append({"rule_id": rule_id, "reason": reason})
+                    elif not actions:
+                        reason = "skill_planned_no_actions"
+                        skipped.append({"rule_id": rule_id, "reason": reason})
+                    selected = {
+                        "goal_id": f"rule:{rule_id}",
+                        "rule_id": rule_id,
+                        "actions": actions,
+                        "skipped": skipped,
+                        "reason": reason,
+                    }
+                    selection_reason = "rule_engine"
+                else:
+                    tied_steps: list[dict[str, Any]] = []
+                    selected = next_step(
+                        state,
+                        catalog,
+                        manager_config,
+                        pending,
+                        enabled_goals=manager_goal_ids,
+                        alternatives=tied_steps,
+                    )
+                if chosen_rule is None and tied_steps:
                     candidates = [
                         {
                             "id": selected["goal_id"],
@@ -374,22 +578,27 @@ def run(argv: Sequence[str] | None = None) -> int:
                         ],
                         {"id": "no_op", "category": "no_op", "actions": []},
                     ]
-                    llm_choice = choose_action(state, candidates)
-                    selection_reason = "llm"
-                    if llm_choice.get("id") == "no_op":
-                        selected = {
-                            "goal_id": "no_goal",
-                            "actions": [],
-                            "skipped": selected["skipped"],
-                            "reason": "llm_no_op",
-                        }
-                    else:
-                        chosen_goal = next(
-                            candidate
-                            for candidate in [selected, *tied_steps]
-                            if candidate["goal_id"] == llm_choice.get("id")
-                        )
-                        selected = {**chosen_goal, "skipped": selected["skipped"]}
+                    if args.manager == "qwen":
+                        llm_choice = choose_action(state, candidates)
+                        selection_reason = "qwen"
+                        if llm_choice.get("id") == "no_op":
+                            selected = {
+                                "goal_id": "no_goal",
+                                "actions": [],
+                                "skipped": selected["skipped"],
+                                "reason": "llm_no_op",
+                            }
+                        else:
+                            chosen_goal = next(
+                                candidate
+                                for candidate in [selected, *tied_steps]
+                                if candidate["goal_id"] == llm_choice.get("id")
+                            )
+                            selected = {**chosen_goal, "skipped": selected["skipped"]}
+                elif chosen_rule is None and args.manager == "gemini" and manager_plan is not None:
+                    selection_reason = "gemini"
+                elif chosen_rule is None:
+                    selection_reason = "planner"
 
             actions = selected["actions"]
             emergency_category = selected.get("emergency_category")
@@ -414,6 +623,22 @@ def run(argv: Sequence[str] | None = None) -> int:
                             "actions": accepted,
                             "submitted_cycle": cycle,
                         }
+                elif (
+                    selected.get("rule_id") is not None
+                    and cycle is not None
+                    and isinstance(command_result.get("results"), list)
+                    and all(
+                        isinstance(item, Mapping)
+                        for item in command_result["results"]
+                    )
+                ):
+                    mark_pending(
+                        rule_pending,
+                        selected["rule_id"],
+                        actions,
+                        cycle,
+                        command_result["results"],
+                    )
                 elif isinstance(command_result.get("results"), list) and all(
                     isinstance(item, Mapping)
                     for item in command_result["results"]
@@ -444,6 +669,13 @@ def run(argv: Sequence[str] | None = None) -> int:
             "selection_reason": selection_reason,
             "pending": _copy_pending(pending),
             "pending_expired": pending_expired,
+            "rule_evaluation": rule_decision,
+            "rule_pending": _copy_pending(rule_pending),
+            "rule_pending_expired": rule_pending_expired,
+            "rule_cooldowns": rule_cooldowns,
+            "manager": args.manager,
+            "manager_plan": manager_plan,
+            "manager_plan_expires_cycle": manager_plan_expires_cycle,
             "emergency_pending": _copy_pending(emergency_pending),
             "emergency_pending_expired": emergency_pending_expired,
             "emergency_cooldowns": emergency_cooldowns,
