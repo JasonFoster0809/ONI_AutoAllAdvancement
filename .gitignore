@@ -9,6 +9,9 @@ oni_catalog.json
 blueprint.json
 *.sav
 *.save
+.env
+.env.*
+*key*
 
 *.key
 *.pem
