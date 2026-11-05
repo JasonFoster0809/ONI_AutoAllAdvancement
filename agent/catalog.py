@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -61,9 +62,13 @@ def choose_materials(building: Mapping[str, Any], state: Mapping[str, Any]) -> l
         raise CatalogError("material_inventory_unavailable")
 
     stock_by_name = {
-        name.casefold(): amount
+        name.casefold(): name
         for name, amount in stock.items()
-        if isinstance(name, str) and isinstance(amount, (int, float)) and amount > 0
+        if isinstance(name, str)
+        and not isinstance(amount, bool)
+        and isinstance(amount, (int, float))
+        and math.isfinite(amount)
+        and amount > 0
     }
 
     selected: list[str] = []
@@ -71,9 +76,11 @@ def choose_materials(building: Mapping[str, Any], state: Mapping[str, Any]) -> l
         options = category.get("options")
         if not isinstance(options, list) or any(not isinstance(option, str) for option in options):
             raise CatalogError("invalid_material_options")
-        choice = next((option for option in options if option.casefold() in stock_by_name), None)
+        choice = next(
+            (stock_by_name[option.casefold()] for option in options if option.casefold() in stock_by_name),
+            None,
+        )
         if choice is None:
             raise CatalogError("insufficient_material")
         selected.append(choice)
     return selected
-

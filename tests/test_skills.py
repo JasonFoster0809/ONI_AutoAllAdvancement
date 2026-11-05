@@ -44,6 +44,7 @@ def test_bedroom_plans_valid_catalog_builds():
     )
     assert [action["id"] for action in actions] == ["Bed", "Door"]
     assert all(action["orientation"] == "Neutral" for action in actions)
+    assert all(action["elements"] == [] for action in actions)
     assert actions[1]["x"] == actions[0]["x"] + 2
 
 
@@ -52,11 +53,30 @@ def test_research_area_and_ladder_shaft():
     catalog = [building("Research", 3, 2), building("Ladder")]
     research = build_research_area(state, catalog, "Research")
     assert len(research) == 1 and research[0]["id"] == "Research"
+    assert research[0]["elements"] == []
     ladder = build_ladder_shaft(state, catalog, "Ladder", height=3)
     assert len(ladder) == 3
+    assert all(action["elements"] == [] for action in ladder)
     assert [action["y"] for action in ladder] == list(
         range(ladder[0]["y"], ladder[0]["y"] + 3)
     )
+
+
+def test_build_skills_include_materials_selected_from_state():
+    state = supported_state()
+    state["resources"] = {"materials": {"SandStone": 50.0}}
+    catalog = [
+        {
+            "id": "Research",
+            "width": 1,
+            "height": 1,
+            "materials": [{"category": "Rock", "options": ["SandStone"]}],
+            "unlocked": True,
+        }
+    ]
+
+    action = build_research_area(state, catalog, "Research")[0]
+    assert action["elements"] == ["SandStone"]
 
 
 def test_corridor_only_digs_solid_cells_inside_map():

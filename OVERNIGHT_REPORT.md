@@ -82,8 +82,11 @@ Không có action game mới nào được thêm trong giai đoạn Python 8-11.
 - `agent.maputils`: chuyển tọa độ map 41x41, phân loại cell và tìm footprint
   trống theo pivot.
 - `agent.catalog`: đọc `oni_catalog.json`; chỉ chọn vật liệu từ
-  `resources.materials`. Field inventory chung này hiện chưa được mod xuất,
-  nên thiếu field sẽ trả `material_inventory_unavailable`.
+  `resources.materials`, so khớp không phân biệt hoa thường nhưng trả tên
+  đúng casing trong state. Thiếu kho trả `material_inventory_unavailable`;
+  nếu không option nào có lượng dương hợp lệ thì trả `insufficient_material`.
+  Catalog không chỉ rõ số kg cần cho mỗi building, nên số dương chỉ chứng
+  minh có tồn kho, không đảm bảo đủ toàn bộ chi phí công trình.
 - `agent.skills`: `build_bedroom`, `build_research_area`, `dig_corridor`,
   `build_ladder_shaft`; các hàm chỉ trả action, không gửi. Bedroom hiện lập
   kế hoạch bed + door, không dựng tường/không đảm bảo game ghi nhận room.
@@ -112,7 +115,8 @@ python -m agent.agent_main --dry-run --max-steps 1 --bed-id <bed-id> --door-id <
 python -m agent.agent_main --dry-run --max-steps 1 --corridor 1,2,8,2
 ```
 
-`python -m pytest -q` đã chạy offline và cho kết quả `23 passed`. Ollama được
+`python -m pytest -q` đã chạy offline và cho kết quả `23 passed` tại giai đoạn
+11; lượt kiểm thử cập nhật sau đây có kết quả mới. Ollama được
 mock trong test; chưa gọi Ollama thật.
 
 ## API game đã xác minh
@@ -131,7 +135,8 @@ Các phần không được thêm do thiếu API/state đã xác minh hoặc vì
   minh được tag than phù hợp. Điện hiện tại chỉ là snapshot circuit/battery.
 - C# alert không suy đoán ngưỡng đói: chỉ báo calories bằng 0; ngưỡng 100
   kcal của Python là heuristic riêng.
-- Không có field tồn kho tổng quát `resources.materials` trong state hiện tại.
+- Tại giai đoạn 11, state chưa xuất `resources.materials`; field này được thêm
+  trong phần bổ sung bên dưới.
 - Rule khẩn cấp không tự suy diễn một hành động sửa chữa nếu không có
   candidate được cấu hình.
 
@@ -198,8 +203,24 @@ tiếp thành công với 0 warning, 0 error.
 
 ### Phần 2 — Python `catalog.choose_materials`
 
-**CHƯA THỰC HIỆN tại thời điểm commit Phần 1.** Sẽ chọn option có lượng tồn kho
-dương, không phân biệt hoa thường để so khớp, và trả đúng casing từ state.
-Schema `oni_catalog.json` không có số kg cần thiết cho từng building/category;
-không tự đặt ngưỡng kg chưa có dữ liệu. Fixture và pytest sẽ được bổ sung ở
-commit Phần 2.
+**XONG — `python -m pytest -q`: 28 passed; `dotnet build`: thành công, 0
+warning, 0 error.** Hàm chọn option của từng category chỉ khi tag tồn kho có
+lượng dương và hữu hạn; so khớp tên không phân biệt hoa thường nhưng action
+giữ đúng casing của key trong state. Thiếu `resources.materials` trả
+`material_inventory_unavailable`; kho có nhưng không có option hợp lệ trả
+`insufficient_material`. Các skill build chuyển lựa chọn vào `elements` của
+action. Đã thêm `tests/fixtures/material_inventory.json` cùng các test đủ
+vật liệu, thiếu vật liệu, không có kho, casing, và action build.
+
+Do schema catalog chỉ liệt kê category và options, không khai báo kg yêu cầu,
+không tự đặt lượng tối thiểu cho từng công trình. Lượng dương là mức duy nhất
+có thể xác nhận từ state hiện tại; game vẫn là nguồn cuối cùng để xác định
+có đủ chi phí xây thực tế hay không.
+
+Ví dụ action để kiểm tra thủ công (thay prefab ID bằng ID trong catalog):
+
+```json
+{"id":"material-build-001","actions":[{"type":"build","id":"<catalog-prefab-id>","x":20,"y":10,"orientation":"Neutral","elements":["SandStone"],"priority":5}]}
+```
+
+Commit Phần 2 sẽ ghi nhận các thay đổi Python, test và tài liệu; không push.

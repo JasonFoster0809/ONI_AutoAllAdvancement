@@ -338,9 +338,12 @@ material options from `oni_catalog.json`.
 The state includes `resources.materials`, refreshed on the same approximately
 10-second cadence as the building-list cache. `catalog.choose_materials`
 uses the positive amounts in this object together with each catalog material
-category's options. Skill planners return action lists without sending them.
-The bedroom planner places a bed and door in a clear supported footprint; it
-does not build or verify room walls.
+category's options. It matches names case-insensitively but returns the name
+exactly as written in the state. The catalog does not specify a required kg
+amount, so any positive finite stock is treated as available; this does not
+guarantee that a building's full construction cost is covered. Skill planners
+return action lists without sending them. The bedroom planner places a bed and
+door in a clear supported footprint; it does not build or verify room walls.
 
 ## Material inventory API
 
@@ -383,7 +386,6 @@ State shape:
   "resources": {
     "materials": {
       "SandStone": 1234.5,
-      "Cuprite": 0.0,
       "Dirt": 250.0,
       "Algae": 50.0
     }
@@ -398,14 +400,13 @@ whose rounded value is zero are omitted. The example names and amounts are
 illustrative, not claims about a live colony.
 
 For a complete snapshot, the direct `ElementLoader.elements` approach makes
-one `GetAmount` query per loaded element tag per state emission:
+one `GetAmount` query per loaded element tag per cache refresh:
 `ElementLoader.elements.Count` queries and O(N) tag iteration, where N is
 the runtime-loaded element count. The DLL does not establish a fixed count:
 the list is populated from loaded element definitions, so DLC/mod content
-can affect it. No performance measurement was made. The mod caches the
-serialized material object per active world and refreshes it approximately
-every 10 seconds, rather than iterating the element list on every
-approximately 2-second state write. If a refresh fails, the
+can affect it. No performance measurement was made. The cache refreshes
+approximately every 10 seconds, rather than iterating the element list on
+every approximately 2-second state write. If a refresh fails, the
 `resources.materials` property is omitted until a later refresh succeeds;
 other resource properties remain available.
 

@@ -1,0 +1,13 @@
+{
+  "cycle": 12,
+  "resources": {
+    "food_kcal": 320000,
+    "materials": {
+      "SandStone": 1200.0,
+      "Cuprite": 0.0,
+      "Dirt": 250.5,
+      "Algae": 50.0
+    }
+  },
+  "dupes": []
+}
