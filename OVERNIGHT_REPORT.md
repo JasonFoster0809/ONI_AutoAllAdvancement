@@ -275,3 +275,6 @@ chi phí:
 
 Kết quả C# mới **CHƯA được test thật trong game**. Không deploy, không copy
 DLL và không chạy ONI. Phần 1 và Phần 2 được commit riêng; không push.
+
+- `75c18f8` — Document construction mass API (Phần 1)
+- `24ccb3f` — Include construction mass in building catalog (Phần 2)
