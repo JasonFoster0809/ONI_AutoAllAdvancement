@@ -42,7 +42,15 @@ def _validate_condition(condition: Any, location: str) -> None:
     if operator in OPERATORS:
         if not isinstance(condition.get("path"), str) or not condition["path"]:
             raise RuleValidationError(f"{location}.path must be a non-empty string")
-        if not _is_number(condition.get("value")):
+        value = condition.get("value")
+        if operator in {"eq", "ne"}:
+            if not (
+                _is_number(value)
+                or isinstance(value, str)
+                or value is None
+            ):
+                raise RuleValidationError(f"{location}.value must be a scalar")
+        elif not _is_number(value):
             raise RuleValidationError(f"{location}.value must be a finite number")
         return
     if operator == "exists":
@@ -58,6 +66,27 @@ def _validate_condition(condition: Any, location: str) -> None:
             raise RuleValidationError(f"{location}.comparison is invalid")
         if not _is_number(condition.get("value")):
             raise RuleValidationError(f"{location}.value must be a finite number")
+        return
+    if operator == "stored_mass":
+        if not isinstance(condition.get("building"), str) or not condition["building"]:
+            raise RuleValidationError(f"{location}.building must be a non-empty string")
+        if not isinstance(condition.get("element"), str) or not condition["element"]:
+            raise RuleValidationError(f"{location}.element must be a non-empty string")
+        if "state" in condition and not isinstance(condition["state"], str):
+            raise RuleValidationError(f"{location}.state must be a string")
+        if condition.get("comparison") not in OPERATORS:
+            raise RuleValidationError(f"{location}.comparison is invalid")
+        if not _is_number(condition.get("value")):
+            raise RuleValidationError(f"{location}.value must be a finite number")
+        return
+    if operator == "is_null":
+        if not isinstance(condition.get("path"), str) or not condition["path"]:
+            raise RuleValidationError(f"{location}.path must be a non-empty string")
+        return
+    if operator == "any_item":
+        if not isinstance(condition.get("path"), str) or not condition["path"]:
+            raise RuleValidationError(f"{location}.path must be a non-empty string")
+        _validate_condition(condition.get("where"), f"{location}.where")
         return
     if operator == "for":
         reads = condition.get("reads")
@@ -174,12 +203,20 @@ def _path_value(state: Mapping[str, Any], path: str) -> tuple[bool, Any]:
 
 
 def _compare(actual: Any, operator: str, expected: Any) -> bool | None:
+    if operator == "eq":
+        if _is_number(actual) and _is_number(expected):
+            return actual == expected
+        if type(actual) is not type(expected):
+            return UNKNOWN
+        return actual == expected if isinstance(actual, (int, float, str, bool)) or actual is None else UNKNOWN
+    if operator == "ne":
+        if _is_number(actual) and _is_number(expected):
+            return actual != expected
+        if type(actual) is not type(expected):
+            return UNKNOWN
+        return actual != expected if isinstance(actual, (int, float, str, bool)) or actual is None else UNKNOWN
     if not _is_number(actual) or not _is_number(expected):
         return UNKNOWN
-    if operator == "eq":
-        return actual == expected
-    if operator == "ne":
-        return actual != expected
     if operator == "lt":
         return actual < expected
     if operator == "lte":
@@ -213,6 +250,57 @@ def _evaluate(
             for building in buildings
         )
         return _compare(count, condition["comparison"], condition["value"])
+    if operator == "stored_mass":
+        buildings = state.get("building_list")
+        if not isinstance(buildings, list) or any(
+            not isinstance(building, Mapping) for building in buildings
+        ):
+            return UNKNOWN
+        matches = [
+            building
+            for building in buildings
+            if building.get("id") == condition["building"]
+            and ("state" not in condition or building.get("state") == condition["state"])
+        ]
+        if not matches:
+            return False
+        total_mass = 0.0
+        for building in matches:
+            if "stored" not in building:
+                return UNKNOWN
+            stored = building["stored"]
+            if isinstance(stored, Mapping):
+                mass = stored.get(condition["element"], 0)
+            elif isinstance(stored, list):
+                mass = 0.0
+                for item in stored:
+                    if not isinstance(item, Mapping):
+                        return UNKNOWN
+                    if item.get("element") == condition["element"]:
+                        mass = item.get("kg")
+                        break
+            else:
+                return UNKNOWN
+            if not _is_number(mass) or mass < 0:
+                return UNKNOWN
+            total_mass += mass
+        return _compare(total_mass, condition["comparison"], condition["value"])
+    if operator == "is_null":
+        found, value = _path_value(state, condition["path"])
+        return value is None if found else UNKNOWN
+    if operator == "any_item":
+        found, items = _path_value(state, condition["path"])
+        if not found or not isinstance(items, list):
+            return UNKNOWN
+        if any(not isinstance(item, Mapping) for item in items):
+            return UNKNOWN
+        results = [
+            _evaluate(condition["where"], item, ())
+            for item in items
+        ]
+        if any(result is True for result in results):
+            return True
+        return False if all(result is False for result in results) else UNKNOWN
     if operator == "for":
         reads = condition["reads"]
         if len(history) < reads:

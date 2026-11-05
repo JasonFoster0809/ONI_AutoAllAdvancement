@@ -43,6 +43,67 @@ def test_rules_file_has_requested_cycle_phases_and_validates():
     assert phase_for_cycle(rules, 100) is None
 
 
+def test_redacted_live_state_fixture_preserves_new_rule_fields():
+    state = json.loads(
+        (FIXTURES / "rule_engine_state_redacted.json").read_text(encoding="utf-8")
+    )
+    assert all(dupe["name"].startswith("Fixture Dupe") for dupe in state["dupes"])
+    assert state["dupes"][0]["room_type"] == "Barracks"
+    assert "bed_x" in state["dupes"][0] and "bed_y" in state["dupes"][0]
+    assert state["building_list"][0]["stored"] == [
+        {"element": "Algae", "kg": 204.05}
+    ]
+
+
+def test_state_aware_rules_match_explicit_missing_bed_and_empty_algae():
+    state = json.loads(
+        (FIXTURES / "rule_engine_state_redacted.json").read_text(encoding="utf-8")
+    )
+    state["dupes"][0]["bed_x"] = None
+    result = explain_rules(state, executors={})
+    assert result["selected"]["rule_id"] == "barracks-dupe-unassigned-bed"
+    assert result["selected"]["status"] == "TODO_NOT_IMPLEMENTED"
+
+    state["dupes"][0]["bed_x"] = 130
+    state["building_list"][0]["stored"] = []
+    result = explain_rules(state, executors={})
+    assert result["selected"]["rule_id"] == "deoxidizer-algae-empty"
+    assert result["selected"]["status"] == "TODO_NOT_IMPLEMENTED"
+
+
+def test_state_aware_rules_keep_unavailable_bed_and_storage_unknown():
+    state = json.loads(
+        (FIXTURES / "rule_engine_state_redacted.json").read_text(encoding="utf-8")
+    )
+    del state["dupes"][0]["bed_x"]
+    del state["building_list"][0]["stored"]
+    result = explain_rules(state)
+    reasons = {item["rule_id"]: item for item in result["reasons"]}
+    assert reasons["barracks-dupe-unassigned-bed"]["status"] == "unknown"
+    assert reasons["deoxidizer-algae-empty"]["status"] == "unknown"
+
+
+def test_stored_mass_aggregates_devices_and_accepts_legacy_mapping():
+    condition = {
+        "op": "stored_mass",
+        "building": "MineralDeoxidizer",
+        "state": "built",
+        "element": "Algae",
+        "comparison": "lte",
+        "value": 0,
+    }
+    document = document_with(condition)
+    state = {
+        "building_list": [
+            {"id": "MineralDeoxidizer", "state": "built", "stored": [{"element": "Algae", "kg": 0}]},
+            {"id": "MineralDeoxidizer", "state": "built", "stored": {"Algae": 1}},
+        ]
+    }
+    assert explain_rules(state, document=document)["reasons"][0]["status"] == "not_matched"
+    state["building_list"][1]["stored"] = {"Algae": 0}
+    assert explain_rules(state, document=document)["reasons"][0]["status"] == "matched"
+
+
 @pytest.mark.parametrize(
     ("operator", "value", "expected"),
     [

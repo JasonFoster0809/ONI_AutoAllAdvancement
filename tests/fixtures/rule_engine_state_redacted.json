@@ -1,0 +1,47 @@
+{
+  "cycle": 5,
+  "dupes": [
+    {
+      "name": "Fixture Dupe 1",
+      "room_type": "Barracks",
+      "room_x": 126,
+      "room_y": 204,
+      "bed_id": 129874,
+      "bed_x": 130,
+      "bed_y": 204,
+      "stress": 0,
+      "calories_kcal": 3847.57
+    },
+    {
+      "name": "Fixture Dupe 2",
+      "room_type": "Barracks",
+      "room_x": 126,
+      "room_y": 204,
+      "bed_id": 129870,
+      "bed_x": 126,
+      "bed_y": 204,
+      "stress": 0,
+      "calories_kcal": 3489.97
+    },
+    {
+      "name": "Fixture Dupe 3",
+      "room_type": "Neutral",
+      "room_x": 116,
+      "room_y": 190,
+      "bed_id": 129872,
+      "bed_x": 128,
+      "bed_y": 204,
+      "stress": 0,
+      "calories_kcal": 3895.04
+    }
+  ],
+  "building_list": [
+    {
+      "id": "MineralDeoxidizer",
+      "state": "built",
+      "operational": true,
+      "powered": true,
+      "stored": [{"element": "Algae", "kg": 204.05}]
+    }
+  ]
+}

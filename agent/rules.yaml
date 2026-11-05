@@ -31,6 +31,37 @@
       "cooldown_cycles": 2,
       "pending": 2,
       "requires": ["build_toilet_room"]
+    },
+    {
+      "id": "deoxidizer-algae-empty",
+      "priority": 90,
+      "when": {"op": "stored_mass", "building": "MineralDeoxidizer", "state": "built", "element": "Algae", "comparison": "lte", "value": 0},
+      "then": {"skill": "build_oxygen_setup", "args": {"existing_machine": true}},
+      "cooldown_cycles": 2,
+      "pending": 2,
+      "requires": ["build_oxygen_setup"]
+    },
+    {
+      "id": "barracks-dupe-unassigned-bed",
+      "priority": 85,
+      "when": {
+        "op": "any_item",
+        "path": "dupes",
+        "where": {
+          "op": "all",
+          "conditions": [
+            {"op": "eq", "path": "room_type", "value": "Barracks"},
+            {"op": "any", "conditions": [
+              {"op": "is_null", "path": "bed_x"},
+              {"op": "is_null", "path": "bed_y"}
+            ]}
+          ]
+        }
+      },
+      "then": {"skill": "build_barracks", "args": {"repair_missing_assignment": true}},
+      "cooldown_cycles": 2,
+      "pending": 2,
+      "requires": ["build_barracks"]
     }
   ]
 }
