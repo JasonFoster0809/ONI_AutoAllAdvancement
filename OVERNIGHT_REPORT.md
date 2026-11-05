@@ -98,21 +98,22 @@ Không có action game mới nào được thêm trong giai đoạn Python 8-11.
 - `agent.llm_chooser`: chỉ gửi candidate cho Ollama local
   `http://localhost:11434/api/generate`, model `qwen2.5-coder:3b`,
   temperature 0; ID không hợp lệ, JSON lỗi hoặc timeout đều fallback no-op.
-- `agent.agent_main`: hỗ trợ `--dry-run`, `--max-steps`, cấu hình prefab ID từ
-  catalog, corridor coordinates và log JSON Lines trong `logs/`.
+- `agent.agent_main`: hỗ trợ `--dry-run`, `--max-steps`, `--goals`,
+  `--config`, `--data-dir` và log JSON Lines trong `logs/`.
 
 Ví dụ chạy offline/dry-run một bước:
 
 ```powershell
-python -m agent.agent_main --dry-run --max-steps 1 --data-dir <thu-muc-fixture>
+python -m agent.agent_main --dry-run --max-steps 1 --data-dir <thu-muc-co-oni_state-va-oni_catalog>
 ```
 
-Ví dụ bật planner bằng ID lấy từ `oni_catalog.json`:
+Ví dụ bật từng mục tiêu (ID công trình được cấu hình trong
+`agent/config.json`, không qua command-line):
 
 ```powershell
-python -m agent.agent_main --dry-run --max-steps 1 --research-center-id <id>
-python -m agent.agent_main --dry-run --max-steps 1 --bed-id <bed-id> --door-id <door-id>
-python -m agent.agent_main --dry-run --max-steps 1 --corridor 1,2,8,2
+python -m agent.agent_main --dry-run --max-steps 1 --goals research_target
+python -m agent.agent_main --dry-run --max-steps 1 --goals barracks
+python -m agent.agent_main --dry-run --max-steps 1 --goals research_target,barracks
 ```
 
 `python -m pytest -q` đã chạy offline và cho kết quả `23 passed` tại giai đoạn
@@ -278,3 +279,77 @@ DLL và không chạy ONI. Phần 1 và Phần 2 được commit riêng; không 
 
 - `75c18f8` — Document construction mass API (Phần 1)
 - `24ccb3f` — Include construction mass in building catalog (Phần 2)
+
+## Bổ sung: Goal planner (các giai đoạn 1-4)
+
+### Giai đoạn 1 — Planner và pending build
+
+**XONG — `python -m pytest -q`: 38 passed; `dotnet build`: thành công, 0
+warning, 0 error.** `agent.planner` có dataclass `Goal`, registry mở rộng qua
+`register_goal`, hai mục tiêu mặc định theo thứ tự `research_target` rồi
+`barracks`, và `next_step` chọn tối đa một mục tiêu. Research chọn tech ready,
+chưa complete, ưu tiên `priority_techs` (mặc định `FarmingTech`). Mục tiêu
+barracks lập kế hoạch sàn cần thiết, bed và door; prefab ID được lấy từ
+`agent/config.json`, không hardcode.
+
+Mục tiêu đã hoàn tất, pending hoặc lỗi khi kiểm tra/kế hoạch sẽ được ghi vào
+`skipped`. Các build đã được mod chấp nhận được theo dõi tới khi hiện trong
+`building_list` ở trạng thái `built` hoặc `under_construction`; khi hết
+`pending_steps` (mặc định 30) thì pending hết hạn và được log. Planner bỏ
+qua build trùng với công trình cùng ID/vị trí đã có trong state. Nếu không
+còn kế hoạch phù hợp trả `goal_id: "no_goal"`.
+
+Giới hạn: C# hiện không xuất `rooms`, do đó trạng thái hoàn thành barracks là
+unknown khi thiếu trường này. Kỹ năng barracks chỉ lập kế hoạch vị trí sàn,
+bed và door; không dựng tường bao hay đảm bảo ONI phân loại khu vực thành
+Barracks. Đây là planner offline, chưa được xác nhận trong game thật.
+
+### Giai đoạn 2 — Vòng lặp và lựa chọn mục tiêu
+
+**XONG — `python -m pytest -q`: 38 passed; `dotnet build`: thành công, 0
+warning, 0 error.** Mỗi vòng chạy emergency rules trước planner. Nếu có
+candidate mục tiêu cùng thứ hạng cao nhất, chỉ khi đó mới gọi Ollama chooser;
+chooser bị giới hạn vào ID candidate và có lựa chọn `no_op`. Nếu không có
+đồng hạng, planner chọn theo thứ hạng xác định. Mỗi vòng gửi nhiều nhất một
+lệnh.
+
+`--goals` nhận danh sách phân cách bằng dấu phẩy; mặc định bật mọi mục tiêu
+đã đăng ký. `--dry-run` không gửi lệnh; `--max-steps 0` chạy liên tục. Log
+JSON Lines bổ sung `goal_id`, `skipped`, `selection_reason`, `pending` và
+`pending_expired`. Cấu hình trong `agent/config.json`: `priority_techs`,
+`pending_steps`, `bed_id`, `door_id`, `tile_id` và `goal_ranks`. Các prefab
+ID mặc định là `null`; `goal_ranks` mặc định rỗng nên thứ tự chuẩn là
+research trước barracks. Gán cùng rank cho hai mục tiêu để bật phân xử LLM.
+
+Ví dụ chạy thử (thư mục dữ liệu phải có `oni_state.json` và
+`oni_catalog.json`):
+
+```powershell
+python -m agent.agent_main --dry-run --max-steps 1 --goals research_target,barracks --data-dir <data-dir> --config agent/config.json
+```
+
+### Giai đoạn 3 — Kiểm thử offline
+
+**XONG — `python -m pytest -q`: 38 passed.** Thêm các fixture cho research
+ready, barracks đã/chưa xây, pending build, catalog và thiếu vật liệu; test
+thứ tự mục tiêu, mục tiêu đã xong/pending/lỗi, chống gửi build trùng,
+`no_goal`, emergency-first và LLM chỉ được gọi khi có nhiều mục tiêu cùng
+rank. LLM được mock; không gọi Ollama thật.
+
+### Giai đoạn 4 — Tài liệu
+
+**XONG.** Cập nhật `ARCHITECTURE.md`, `ROADMAP.md`, báo cáo này và mặc định
+`goal_ranks` trong `agent/config.json`/`agent_main.py`. Roadmap ghi rõ việc
+còn chờ kiểm thử game, cấu hình prefab ID thật, state `rooms`, hành động
+khẩn cấp và xác nhận Ollama local.
+
+### Commit goal planner (không push)
+
+- `349419b` — Add ordered colony goal planner
+- `76fbaca` — Connect planner to goal agent loop
+- `1a7b2d9` — Test goal planning and pending behavior offline
+- Giai đoạn 4 gồm tài liệu, báo cáo và mặc định `goal_ranks`, được commit
+  cùng thay đổi này.
+
+Toàn bộ planner và code C# **CHƯA test thật trong game**; kiểm thử planner
+chỉ offline. Không chạy game/deploy, không copy DLL, không push.

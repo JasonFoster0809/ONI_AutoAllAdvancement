@@ -21,26 +21,29 @@ as part of this work.
 
 ## 3. Python decision agent
 
-**Status: offline implementation and tests complete; live integration waiting.**
+**Status: goal planner and offline tests complete; live integration waiting.**
 
 The client, map helpers, catalog handling, skill planners, deterministic
-rules, constrained local Ollama chooser, CLI loop, and JSON Lines logging are
+rules, constrained local Ollama chooser, ordered `research_target` / `barracks`
+goal planner, pending build tracking, CLI loop, and JSON Lines logging are
 implemented. Remaining work:
 
-- Add a verified general material-stock field if material selection should be
-  automatic; the current state does not include `resources.materials`.
-- Configure real prefab IDs from the mod's catalog and decide which safe
-  actions should address oxygen, food, stress, and temperature emergencies.
+- Populate `agent/config.json` with prefab IDs copied from `oni_catalog.json`.
+- Extend the C# state with verified room data if Barracks completion should
+  be recognized directly; without it, `barracks.is_done` remains unknown.
+- Decide which safe actions should address oxygen, food, stress, and
+  temperature emergencies; currently the hard rules stop at no-op.
 - Verify the selected Ollama model and local endpoint on the user's machine.
 - Test file exchange and action results with ONI running; offline tests are
   not a substitute for game integration.
-- Extend the bedroom planner if an enclosed room, rather than a bed and door
-  placement plan, is required.
+- Extend the barracks planner if actual room enclosure/buildability beyond
+  supported floor + bed + door is required.
 
 ## 4. Validation, safety, and documentation
 
 **Status: offline tests and documentation complete; live validation open.**
 
-`python -m pytest -q` passes 22 tests. `dotnet build` passes. The C# mod has
-not been run in the game, and no deployment, DLL copy, or live command test
-was performed. Re-run the API verification and build after game updates.
+`python -m pytest -q` currently passes 38 offline tests. `dotnet build`
+passes. The C# mod and Python file exchange have not been tested in the game,
+and no deployment, DLL copy, or live command test was performed. Re-run the
+API verification and build after game updates.

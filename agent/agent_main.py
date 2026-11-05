@@ -34,6 +34,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "bed_id": None,
     "door_id": None,
     "tile_id": None,
+    "goal_ranks": {},
 }
 
 

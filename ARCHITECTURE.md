@@ -19,12 +19,14 @@ Files in the ONI user data directory
 
 Python agent
   read state and check its modification time
-    → apply deterministic emergency rules before planning
-    → on an emergency, choose a configured matching action or safe no-op
-    → otherwise construct configured skill plans from state + catalog
-    → ask local Ollama to select one supplied candidate ID
-    → send at most one command and wait for a result with the matching ID
-    → append a JSON Lines record under logs/
+    → load agent/config.json and update pending build-order acknowledgements
+    → apply deterministic emergency rules first
+    → if no emergency: planner walks research_target, then barracks
+    → skip completed, pending, unconfigurable, or already-present objectives
+    → if multiple plans share the best rank, Ollama may choose only a supplied goal ID
+    → otherwise execute the first eligible plan deterministically
+    → send one command per goal, track accepted build actions until state acknowledgement / expiry
+    → append decision, skipped reasons, pending state, and result to JSON Lines log
 ```
 
 The mod processes game reads and actions on the game's main thread. Its
@@ -44,15 +46,26 @@ without launching ONI or Ollama.
 - The agent does not infer prefab IDs. Building IDs are supplied from
   `oni_catalog.json` by command-line configuration.
 - Skill functions return action plans and never send them directly.
-- The bedroom skill currently plans a bed and door, not a complete enclosed
-  room.
+- The barracks planner lays floor tiles only where its selected footprint has
+  no solid support, then plans a bed and door. It does not construct an
+  enclosure or prove that ONI recognizes the area as a Barracks room.
+- The current C# state does not export `rooms`; until that is added,
+  `barracks.is_done` is unknown and the planner relies on `building_list`
+  duplicate filtering and pending tracking.
+- Configure prefab IDs in `agent/config.json`; no building prefab ID is
+  hardcoded in planner logic. `goal_ranks` can give goals the same rank to
+  enable LLM tie selection; default goal order gives research higher
+  priority than barracks.
+- Pending build acknowledgements live in agent process memory. Accepted
+  orders are cleared when every planned building appears in `building_list`,
+  or logged and expired after `pending_steps` iterations. Existing matching
+  buildings are never re-issued by the planner.
 - The mod does not currently export a general
   `resources.materials` inventory. Material-dependent skills report
   `material_inventory_unavailable` until that data is available.
-- The emergency rules can select a configured candidate with a matching
-  category. The current main loop has no emergency-specific repair action
-  configured, so an emergency currently selects no-op before skills are
-  planned and does not let the LLM override that decision.
+- Emergency rules run before the planner. The current loop does not configure
+  emergency repair actions, so a detected emergency selects no-op and blocks
+  both planner and LLM.
 - C# changes have build validation only; they have not been tested in a live
   game. Python behavior has offline tests only; the live file/game and Ollama
   integration has not been exercised.
