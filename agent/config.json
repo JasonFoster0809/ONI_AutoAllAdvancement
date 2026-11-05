@@ -1,9 +1,9 @@
 {
   "priority_techs": ["FarmingTech"],
   "pending_steps": 30,
-  "bed_id": null,
-  "door_id": null,
-  "tile_id": null,
+  "bed_id": "Bed",
+  "door_id": "Door",
+  "tile_id": "Tile",
   "barracks_bed_count": 4,
   "oxygen_min_g": 50.0,
   "oxygen_consecutive_readings": 3,
