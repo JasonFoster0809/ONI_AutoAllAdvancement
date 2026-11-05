@@ -39,6 +39,22 @@ they depend on traits, building configuration, or game version.
    - Check the `research` state for prerequisites, target, active research,
      and remaining point types before changing the target.
 
+5. **Barracks**
+   - The user's in-game tooltip reports that a Barracks needs one or more
+     beds, no industrial machinery, and room size 12-64 cells; it lists
+     Morale +1 and Stamina +100%/cycle. The bed, machinery, and size
+     requirements were cross-checked against the decompiled
+     `Database.RoomTypes.Barracks` and `RoomConstraints` implementation.
+   - Community information says the Morale effect is applied when a
+     duplicant wakes after sleeping; **cần kiểm chứng** in the installed game.
+   - Mess Hall and Great Hall are separate morale-related room types. Their
+     exact requirements and effects are **cần kiểm chứng** before planning
+     around them.
+   - The planner creates a perimeter from Tile pieces, leaves a wall opening
+     for one Door, and places the configured number of beds. It uses catalog
+     dimensions and construction masses and does not send actions when
+     placement or material checks fail.
+
 ## Planning safeguards
 
 - Prefer small, reversible actions and inspect the next state before issuing
@@ -65,11 +81,15 @@ they depend on traits, building configuration, or game version.
   temperature outside 273.15-318.15 K as emergency heuristics. These are
   agent policy thresholds, not verified ONI danger limits; **cần kiểm chứng**
   against a live colony before enabling automatic commands.
-- `resources.materials` is not present in the current mod state. Do not expect
-  the Python material chooser to select construction elements until an
-  inventory field is added or supplied by another trusted source.
-- The Python bedroom planner currently places a bed and a door; it does not
-  guarantee that the surrounding tiles form an enclosed room.
+- `resources.materials` reports positive material stock in kilograms. The
+  Python Barracks planner aggregates catalog `mass_kg` by material group
+  before selecting elements; it refuses to plan when inventory or required
+  mass data is unavailable.
+- `rooms` reports the RoomProber type, cell count, and a representative
+  coordinate. The Barracks goal is considered complete only when this state
+  contains a room with `type: "Barracks"`.
+- `build_bedroom` remains a separate simple bed-and-door planner. It does not
+  create an enclosed room; use the Barracks goal for the perimeter plan.
 
 ## Cần kiểm chứng
 
@@ -78,3 +98,9 @@ they depend on traits, building configuration, or game version.
 - Exact Research Center Dirt consumption in the currently installed game
   version and any modifiers that affect research rate.
 - Mineral Deoxidizer throughput and algae consumption under current settings.
+- Whether Barracks Morale is applied on waking and the exact behavior in the
+  installed game version.
+- The Morale requirements and effects for Mess Hall and Great Hall.
+- Construction validation of the generated Barracks, especially if the
+  configured Door is taller than the Bed or a perimeter tile is already
+  under construction.

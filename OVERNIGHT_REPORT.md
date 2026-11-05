@@ -299,10 +299,10 @@ Mục tiêu đã hoàn tất, pending hoặc lỗi khi kiểm tra/kế hoạch s
 qua build trùng với công trình cùng ID/vị trí đã có trong state. Nếu không
 còn kế hoạch phù hợp trả `goal_id: "no_goal"`.
 
-Giới hạn: C# hiện không xuất `rooms`, do đó trạng thái hoàn thành barracks là
-unknown khi thiếu trường này. Kỹ năng barracks chỉ lập kế hoạch vị trí sàn,
-bed và door; không dựng tường bao hay đảm bảo ONI phân loại khu vực thành
-Barracks. Đây là planner offline, chưa được xác nhận trong game thật.
+Giới hạn tại thời điểm triển khai planner ban đầu: C# chưa xuất `rooms` và
+skill chỉ đặt bed/door. Hai điểm này đã được cập nhật trong phần
+"Bổ sung phòng Barracks" bên dưới; các hành vi Barracks mới vẫn chỉ được
+kiểm thử offline.
 
 ### Giai đoạn 2 — Vòng lặp và lựa chọn mục tiêu
 
@@ -353,3 +353,98 @@ khẩn cấp và xác nhận Ollama local.
 
 Toàn bộ planner và code C# **CHƯA test thật trong game**; kiểm thử planner
 chỉ offline. Không chạy game/deploy, không copy DLL, không push.
+
+## Bổ sung: Tính năng phòng Barracks
+
+### Giai đoạn 1 — Xác minh Room API
+
+**XONG — API xác minh bằng `ilspycmd 8.2`; `dotnet build` thành công, 0
+warning, 0 error.** `Game.roomProber`, `RoomProber.rooms`, `Room.roomType`,
+`Room.cavity`, `CavityInfo.NumCells`, `CavityInfo.cells`, `Grid.CellToXY`,
+`RoomType.isSatisfactory`, `Database.RoomTypes.Barracks` và các
+`RoomConstraints` được decompile từ Assembly-CSharp (Resource.Id/Name đối
+chiếu Assembly-CSharp-firstpass). Barracks trong code cần ít nhất một
+building có tag BedType (không phải Clinic), cấm IndustrialMachinery, và
+`cavity.NumCells` từ 12 đến 64 inclusive. Game tìm cavity bằng flood fill;
+solid/foundation cells và door cells là biên. Đã ghi source details, ví dụ
+JSON và chi phí O(R) mỗi lần cập nhật trong `README_API.md`.
+
+### Giai đoạn 2 — State C#
+
+**XONG — `dotnet build` thành công, 0 warning, 0 error.** State thêm `rooms`
+với `{type, size, x, y}`; cache theo world ID khoảng 10 giây như
+`building_list`. `x,y` là ô đầu tiên hợp lệ trong cavity; lỗi refresh bỏ
+toàn bộ khối rooms, entry riêng lẻ không hợp lệ được log và bỏ qua. Mọi
+đọc chạy trong hook `Game.Update` trên main thread. Chưa chạy game.
+
+Ví dụ state:
+
+```json
+{"rooms":[{"type":"Barracks","size":12,"x":4,"y":7}]}
+```
+
+### Giai đoạn 3 — Planner Python
+
+**XONG — `python -m pytest -q`: 46 passed; `dotnet build`: thành công, 0
+warning, 0 error.** Skill cũ chỉ đặt Bed/Door được giữ dưới tên
+`build_bedroom`. `build_barracks` mới dùng dimensions từ catalog, tìm vùng
+trống gần telepad, tạo perimeter Tile ở sàn/trần/hai tường, chừa opening cho
+Door và đặt số Bed cấu hình được. Kích thước trong nhà được giữ ở chiều cao
+Bed và ít nhất 12 ô, không vượt 64. Tile đang có được tái sử dụng chỉ khi
+`building_list` xác nhận đúng prefab Tile; công trình khác làm candidate đó
+không hợp lệ. Build action dùng orientation `"Neutral"`, pivot theo quy ước
+2 ô trái/3 ô giữa, và y là hàng dưới.
+
+Trước khi trả action, planner cộng `mass_kg` theo nhóm vật liệu cho Bed, Door
+và số Tile mới, rồi gọi `catalog.choose_materials` với chi phí tổng hợp.
+Thiếu kho trả `material_inventory_unavailable`; thiếu lượng trả
+`insufficient_material` kèm required/available/missing kg. Thiếu `mass_kg`
+hoặc Door không vừa chiều cao Bed thì dừng với lý do riêng, không đoán.
+`planner.barracks_done` dùng `rooms[].type == "Barracks"`; không có block
+rooms thì trạng thái chưa xác định.
+
+Đã thêm fixtures/test cho vùng trống, không gian không hợp lệ, thiếu vật
+liệu, Tile đã có, công trình khác chiếm tường, planner tích hợp và
+`build_bedroom` cũ. CLI hỗ trợ `--barracks-bed-count` và `--tile-id`; Bed và
+Door prefab IDs tiếp tục lấy từ `agent/config.json`.
+
+Ví dụ dry-run (cấu hình `bed_id`/`door_id` trong config và dùng data dir có
+state/catalog):
+
+```powershell
+python -m agent.agent_main --dry-run --max-steps 1 --goals barracks --barracks-bed-count 4 --tile-id <tile-prefab-id> --config agent/config.json --data-dir <data-dir>
+```
+
+### Giai đoạn 4 — Tài liệu
+
+**XONG.** Cập nhật `playbook.md`, `ARCHITECTURE.md`, `ROADMAP.md` và báo cáo
+này. Thông tin Bed/industrial machinery/12-64/Morale/Stamina trong tooltip
+được ghi rõ nguồn tooltip trong game do người dùng cung cấp; ba điều kiện
+đầu đối chiếu với code. Thời điểm cấp Morale lúc dupe thức dậy được ghi là
+thông tin cộng đồng, cần kiểm chứng; điều kiện Mess Hall/Great Hall cũng
+được đánh dấu cần kiểm chứng.
+
+### Tổng kết và commits
+
+| Giai đoạn | Trạng thái | Kiểm chứng |
+|---|---|---|
+| 1. Room API | XONG | ILSpy; build pass |
+| 2. State `rooms` | XONG | build pass |
+| 3. Barracks planner | XONG | 46 pytest pass; build pass |
+| 4. Tài liệu | XONG | review tài liệu; build pass |
+
+Không có phần nào bị bỏ qua hoặc dừng sau ba lần lỗi. Hai lỗi assertion trong
+lượt test tập trung ban đầu (tọa độ Door kỳ vọng và thiếu sàn fixture cho
+`build_bedroom`) được sửa; lượt test cuối cùng đều qua.
+
+Commits riêng theo giai đoạn, không push:
+
+- `3764bfc` — Document verified ONI room APIs
+- `01bdfc5` — Expose cached room state in ONI snapshot
+- `fbc3f52` — Plan complete Barracks room builds offline
+- Giai đoạn 4: commit tài liệu Barracks riêng.
+
+**Code C# mới CHƯA test thật trong game.** Planner chỉ được kiểm thử offline;
+Room classification, build validity thực tế, hiệu ứng Morale/Stamina và
+trao đổi file trong game vẫn cần kiểm chứng thủ công. Không chạy game hoặc
+deploy, không copy DLL và không push.

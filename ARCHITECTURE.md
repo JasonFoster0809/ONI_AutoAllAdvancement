@@ -7,7 +7,7 @@ Oxygen Not Included
     ├─ validate and execute each action independently
     ├─ atomically publish oni_results.json
     ├─ publish oni_state.json (about every 2 seconds)
-    ├─ refresh building_list / research / schedule state caches (about every 10 seconds)
+    ├─ refresh building_list / rooms / research / schedule state caches (about every 10 seconds)
     └─ respond to oni_export.flag by writing blueprint.json
 
 Files in the ONI user data directory
@@ -46,12 +46,17 @@ without launching ONI or Ollama.
 - The agent does not infer prefab IDs. Building IDs are supplied from
   `oni_catalog.json` by command-line configuration.
 - Skill functions return action plans and never send them directly.
-- The barracks planner lays floor tiles only where its selected footprint has
-  no solid support, then plans a bed and door. It does not construct an
-  enclosure or prove that ONI recognizes the area as a Barracks room.
-- The current C# state does not export `rooms`; until that is added,
-  `barracks.is_done` is unknown and the planner relies on `building_list`
-  duplicate filtering and pending tracking.
+- The C# state caches `rooms` from `Game.Instance.roomProber.rooms` for about
+  10 seconds. The Barracks goal is done when a room entry has
+  `type: "Barracks"`; without a valid rooms block, completion is unknown.
+- The Barracks planner uses the catalog's Bed, Door, and Tile dimensions,
+  builds a closed tile perimeter with a Door opening, targets 12-64 interior
+  cells, and checks cumulative material mass before returning actions.
+  Existing Tile pieces are reused; other occupied perimeter cells invalidate
+  that candidate. It returns no plan if the Door cannot fit within the Bed
+  height, construction mass is unavailable, or materials are insufficient.
+- `build_bedroom` remains the separate simple bed-and-door planner and does
+  not construct an enclosure.
 - Configure prefab IDs in `agent/config.json`; no building prefab ID is
   hardcoded in planner logic. `goal_ranks` can give goals the same rank to
   enable LLM tie selection; default goal order gives research higher
@@ -60,9 +65,10 @@ without launching ONI or Ollama.
   orders are cleared when every planned building appears in `building_list`,
   or logged and expired after `pending_steps` iterations. Existing matching
   buildings are never re-issued by the planner.
-- The mod does not currently export a general
-  `resources.materials` inventory. Material-dependent skills report
-  `material_inventory_unavailable` until that data is available.
+- The mod exports cached `resources.materials` stock. Barracks planning
+  depends on that inventory and catalog `mass_kg`; missing inventory returns
+  `material_inventory_unavailable`, and missing construction mass is reported
+  rather than guessed.
 - Emergency rules run before the planner. The current loop does not configure
   emergency repair actions, so a detected emergency selects no-op and blocks
   both planner and LLM.
