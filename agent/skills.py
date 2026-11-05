@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .catalog import CatalogError, building_dimensions, choose_materials, get_building
-from .maputils import cell_at_xy, find_empty_rectangle, state_map
+from .maputils import BUILDABLE_MAP_CELLS, SOLID_MAP_CELLS, cell_at_xy, find_empty_rectangle, state_map
 
 
 class SkillPlanningError(ValueError):
@@ -106,9 +106,89 @@ def build_barracks(
     catalog: Sequence[Mapping[str, Any]],
     bed_id: str,
     door_id: str,
+    tile_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Plan a bed and door using the existing supported bedroom layout."""
-    return build_bedroom(state, catalog, bed_id, door_id)
+    """Plan a bed and door, adding floor tiles only where support is absent."""
+    bed = _get_building(catalog, bed_id)
+    door = _get_building(catalog, door_id)
+    bed_width, bed_height = building_dimensions(bed)
+    door_width, door_height = building_dimensions(door)
+    footprint_width = bed_width + door_width
+    footprint_height = max(bed_height, door_height)
+    rows, origin, center = _map_context(state)
+    map_width = len(rows[0])
+    map_height = len(rows)
+    placements: list[tuple[int, int, int, list[int]]] = []
+
+    for bottom_row in range(map_height - 1, footprint_height - 2, -1):
+        top_row = bottom_row - footprint_height + 1
+        for left_column in range(map_width - footprint_width + 1):
+            clear = all(
+                rows[row][column] in BUILDABLE_MAP_CELLS
+                for row in range(top_row, bottom_row + 1)
+                for column in range(left_column, left_column + footprint_width)
+            )
+            if not clear:
+                continue
+
+            left_x = origin["x"] + left_column
+            bottom_y = origin["y"] + map_height - 1 - bottom_row
+            unsupported_columns: list[int] = []
+            supported = True
+            for x in range(left_x, left_x + footprint_width):
+                support_cell = cell_at_xy(rows, origin, x, bottom_y - 1)
+                if support_cell in SOLID_MAP_CELLS:
+                    continue
+                if support_cell in BUILDABLE_MAP_CELLS:
+                    unsupported_columns.append(x)
+                    continue
+                supported = False
+                break
+            if not supported:
+                continue
+
+            bed_pivot = _pivot_x(left_x, bed_width)
+            distance = (
+                abs(bed_pivot - center[0]) + abs(bottom_y - center[1])
+                if center is not None
+                else 0
+            )
+            placements.append((distance, bottom_row, left_column, unsupported_columns))
+
+    if not placements:
+        raise SkillPlanningError("no_valid_placement")
+
+    _, bottom_row, left_column, unsupported_columns = min(placements)
+    left_x = origin["x"] + left_column
+    bottom_y = origin["y"] + map_height - 1 - bottom_row
+    actions: list[dict[str, Any]] = []
+
+    if unsupported_columns:
+        if not isinstance(tile_id, str) or not tile_id:
+            raise SkillPlanningError("tile_id_unconfigured")
+        try:
+            tile = _get_building(catalog, tile_id)
+            tile_width, tile_height = building_dimensions(tile)
+        except CatalogError as error:
+            raise SkillPlanningError(error.reason) from error
+        if (tile_width, tile_height) != (1, 1):
+            raise SkillPlanningError("invalid_tile_dimensions")
+        tile_materials = _get_materials(tile, state)
+        actions.extend(
+            _build_action(tile, state, x, bottom_y - 1, tile_materials)
+            for x in unsupported_columns
+        )
+
+    bed_materials = _get_materials(bed, state)
+    door_materials = _get_materials(door, state)
+    actions.append(
+        _build_action(bed, state, _pivot_x(left_x, bed_width), bottom_y, bed_materials)
+    )
+    door_left = left_x + bed_width
+    actions.append(
+        _build_action(door, state, _pivot_x(door_left, door_width), bottom_y, door_materials)
+    )
+    return actions
 
 
 def build_research_area(

@@ -111,7 +111,14 @@ def _plan_barracks(
         raise SkillPlanningError("bed_id_unconfigured")
     if not isinstance(door_id, str) or not door_id:
         raise SkillPlanningError("door_id_unconfigured")
-    return build_barracks(state, catalog, bed_id, door_id)
+    tile_id = config.get("tile_id")
+    return build_barracks(
+        state,
+        catalog,
+        bed_id,
+        door_id,
+        tile_id if isinstance(tile_id, str) else None,
+    )
 
 
 def register_goal(goal: Goal, *, rank: int | None = None) -> None:
@@ -124,6 +131,11 @@ def register_goal(goal: Goal, *, rank: int | None = None) -> None:
         rank = max(_GOAL_RANKS.values(), default=-1) + 1
     GOALS.append(goal)
     _GOAL_RANKS[goal.id] = rank
+
+
+def registered_goal_ids() -> list[str]:
+    """Return registered goals in declaration order."""
+    return [goal.id for goal in GOALS]
 
 
 register_goal(

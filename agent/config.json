@@ -1,0 +1,7 @@
+{
+  "priority_techs": ["FarmingTech"],
+  "pending_steps": 30,
+  "bed_id": null,
+  "door_id": null,
+  "tile_id": null
+}

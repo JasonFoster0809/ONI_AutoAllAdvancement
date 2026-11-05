@@ -1,4 +1,4 @@
-"""Offline-testable agent loop; game communication is file-based."""
+"""Goal-driven agent loop with emergency rules and file-based commands."""
 
 from __future__ import annotations
 
@@ -14,71 +14,59 @@ from typing import Any
 from .catalog import CatalogError, load_catalog
 from .llm_chooser import choose_action
 from .oni_client import read_state, send_command
-from .rules import choose_emergency_action
-from .skills import (
-    SkillPlanningError,
-    build_bedroom,
-    build_ladder_shaft,
-    build_research_area,
-    dig_corridor,
+from .planner import (
+    mark_pending,
+    next_step,
+    registered_goal_ids,
+    update_pending,
 )
+from .rules import choose_emergency_action
 
 
 LOGGER = logging.getLogger(__name__)
+AGENT_DIR = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = AGENT_DIR / "config.json"
 LOG_PATH = Path(__file__).resolve().parent.parent / "logs" / "agent.jsonl"
 
-
-def _candidate(
-    candidate_id: str, category: str, actions: Sequence[Mapping[str, Any]]
-) -> dict[str, Any]:
-    return {
-        "id": candidate_id,
-        "category": category,
-        "actions": [dict(action) for action in actions],
-    }
+DEFAULT_CONFIG: dict[str, Any] = {
+    "priority_techs": ["FarmingTech"],
+    "pending_steps": 30,
+    "bed_id": None,
+    "door_id": None,
+    "tile_id": None,
+}
 
 
-def build_candidates(
-    state: Mapping[str, Any],
-    catalog: Sequence[Mapping[str, Any]],
-    *,
-    bed_id: str | None = None,
-    door_id: str | None = None,
-    research_center_id: str | None = None,
-    ladder_id: str | None = None,
-    corridor: tuple[int, int, int, int] | None = None,
-) -> list[dict[str, Any]]:
-    """Build only configured skill plans; prefab IDs come from caller/catalog."""
-    candidates = [_candidate("no_op", "no_op", [])]
-    plans = (
-        ("bedroom", "housing", bed_id is not None and door_id is not None,
-         lambda: build_bedroom(state, catalog, bed_id, door_id)),
-        ("research_area", "research", research_center_id is not None,
-         lambda: build_research_area(state, catalog, research_center_id)),
-        ("ladder_shaft", "mobility", ladder_id is not None,
-         lambda: build_ladder_shaft(state, catalog, ladder_id)),
-        ("corridor", "dig", corridor is not None,
-         lambda: dig_corridor(state, *corridor)),
-    )
-    for candidate_id, category, enabled, create_plan in plans:
-        if not enabled:
-            continue
-        try:
-            candidates.append(_candidate(candidate_id, category, create_plan()))
-        except (CatalogError, SkillPlanningError, KeyError, TypeError, ValueError) as error:
-            LOGGER.warning("Could not plan %s: %s", candidate_id, error)
-    return candidates
+def load_agent_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
+    """Load goal settings over conservative defaults without inventing prefab IDs."""
+    config_path = Path(path)
+    with config_path.open("r", encoding="utf-8") as config_file:
+        supplied = json.load(config_file)
+    if not isinstance(supplied, dict):
+        raise ValueError("agent config must be a JSON object")
+    config = {**DEFAULT_CONFIG, **supplied}
+    if (
+        not isinstance(config["priority_techs"], list)
+        or any(not isinstance(tech_id, str) or not tech_id for tech_id in config["priority_techs"])
+    ):
+        raise ValueError("priority_techs must be an array of non-empty strings")
+    pending_steps = config["pending_steps"]
+    if isinstance(pending_steps, bool) or not isinstance(pending_steps, int) or pending_steps <= 0:
+        raise ValueError("pending_steps must be a positive integer")
+    for key in ("bed_id", "door_id", "tile_id"):
+        if config[key] is not None and (not isinstance(config[key], str) or not config[key]):
+            raise ValueError(f"{key} must be a non-empty string or null")
+    return config
 
 
 def _state_summary(state: Mapping[str, Any]) -> dict[str, Any]:
     dupes = state.get("dupes")
+    resources = state.get("resources")
     return {
         "cycle": state.get("cycle"),
         "dupe_count": len(dupes) if isinstance(dupes, list) else None,
         "oxygen_air": state.get("oxygen_air"),
-        "food_kcal": (state.get("resources") or {}).get("food_kcal")
-        if isinstance(state.get("resources"), Mapping)
-        else None,
+        "food_kcal": resources.get("food_kcal") if isinstance(resources, Mapping) else None,
     }
 
 
@@ -89,80 +77,167 @@ def _append_log(entry: Mapping[str, Any], path: Path | None = None) -> None:
         log_file.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
 
 
-def _parse_corridor(value: str) -> tuple[int, int, int, int]:
-    try:
-        coordinates = tuple(int(part.strip()) for part in value.split(","))
-    except ValueError as error:
-        raise argparse.ArgumentTypeError("corridor must be x1,y1,x2,y2 integers") from error
-    if len(coordinates) != 4:
-        raise argparse.ArgumentTypeError("corridor must be x1,y1,x2,y2 integers")
-    return coordinates[0], coordinates[1], coordinates[2], coordinates[3]
+def _parse_goals(value: str) -> list[str]:
+    goals = [goal.strip() for goal in value.split(",") if goal.strip()]
+    if not goals:
+        raise argparse.ArgumentTypeError("--goals requires at least one goal id")
+    unknown = sorted(set(goals) - set(registered_goal_ids()))
+    if unknown:
+        raise argparse.ArgumentTypeError(f"unknown goal id(s): {', '.join(unknown)}")
+    return goals
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="ONI colony file-based agent")
+    parser = argparse.ArgumentParser(description="ONI colony file-based goal agent")
     parser.add_argument("--dry-run", action="store_true", help="print choices without sending commands")
     parser.add_argument("--max-steps", type=int, default=0, help="stop after N steps; 0 runs indefinitely")
     parser.add_argument("--interval-seconds", type=float, default=2.0)
     parser.add_argument("--data-dir", type=Path)
-    parser.add_argument("--bed-id", help="catalog prefab ID for the bed skill")
-    parser.add_argument("--door-id", help="catalog prefab ID for the door skill")
-    parser.add_argument("--research-center-id", help="catalog prefab ID for the research skill")
-    parser.add_argument("--ladder-id", help="catalog prefab ID for the ladder skill")
-    parser.add_argument("--corridor", type=_parse_corridor, help="dig coordinates x1,y1,x2,y2")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    parser.add_argument(
+        "--goals",
+        type=_parse_goals,
+        help="comma-separated enabled goal ids; defaults to all registered goals",
+    )
     args = parser.parse_args(argv)
     if args.max_steps < 0:
         parser.error("--max-steps must be non-negative")
     if args.interval_seconds <= 0:
         parser.error("--interval-seconds must be positive")
-    if (args.bed_id is None) != (args.door_id is None):
-        parser.error("--bed-id and --door-id must be supplied together")
     return args
+
+
+def _copy_pending(pending: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    return json.loads(json.dumps(pending, ensure_ascii=False))
 
 
 def run(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    config = load_agent_config(args.config)
+    enabled_goals = args.goals or registered_goal_ids()
+    pending: dict[str, dict[str, Any]] = {}
     step = 0
+
     while args.max_steps == 0 or step < args.max_steps:
         step += 1
         state: dict[str, Any] = {}
         summary: dict[str, Any] = {}
-        selected: Mapping[str, Any] = {"id": "no_op", "actions": []}
-        result: Mapping[str, Any] = {"reason": "no_action"}
+        selected: dict[str, Any] = {"goal_id": "no_goal", "actions": [], "skipped": []}
+        selection_reason = "rule"
+        result: Mapping[str, Any] = {"reason": "no_goal"}
+        pending_expired: list[dict[str, Any]] = []
+        catalog: list[dict[str, Any]] = []
+
         try:
             state = read_state(args.data_dir)
             summary = _state_summary(state)
-            selected = choose_emergency_action(state, [])
-            if selected is None:
-                catalog = load_catalog(args.data_dir)
-                candidates = build_candidates(
+            catalog = load_catalog(args.data_dir)
+            pending_expired = update_pending(
+                state,
+                pending,
+                step,
+                config["pending_steps"],
+                catalog,
+            )
+            for expired in pending_expired:
+                LOGGER.warning(
+                    "Pending goal %s expired after %d steps",
+                    expired["goal_id"],
+                    config["pending_steps"],
+                )
+
+            emergency = choose_emergency_action(state, [])
+            if emergency is not None:
+                selected = {
+                    "goal_id": "emergency",
+                    "actions": emergency.get("actions", []),
+                    "skipped": [],
+                    "reason": emergency.get("reason", "emergency"),
+                }
+                selection_reason = "rule"
+            else:
+                tied_steps: list[dict[str, Any]] = []
+                selected = next_step(
                     state,
                     catalog,
-                    bed_id=args.bed_id,
-                    door_id=args.door_id,
-                    research_center_id=args.research_center_id,
-                    ladder_id=args.ladder_id,
-                    corridor=args.corridor,
+                    config,
+                    pending,
+                    enabled_goals=enabled_goals,
+                    alternatives=tied_steps,
                 )
-                selected = choose_action(state, candidates)
-            actions = selected.get("actions")
-            if not isinstance(actions, list) or not actions:
-                result = {"reason": selected.get("reason", "no_action")}
+                if tied_steps:
+                    candidates = [
+                        {
+                            "id": selected["goal_id"],
+                            "category": "goal",
+                            "actions": selected["actions"],
+                        },
+                        *[
+                            {
+                                "id": tied["goal_id"],
+                                "category": "goal",
+                                "actions": tied["actions"],
+                            }
+                            for tied in tied_steps
+                        ],
+                        {"id": "no_op", "category": "no_op", "actions": []},
+                    ]
+                    llm_choice = choose_action(state, candidates)
+                    selection_reason = "llm"
+                    if llm_choice.get("id") == "no_op":
+                        selected = {
+                            "goal_id": "no_goal",
+                            "actions": [],
+                            "skipped": selected["skipped"],
+                            "reason": "llm_no_op",
+                        }
+                    else:
+                        chosen_goal = next(
+                            candidate
+                            for candidate in [selected, *tied_steps]
+                            if candidate["goal_id"] == llm_choice.get("id")
+                        )
+                        selected = {**chosen_goal, "skipped": selected["skipped"]}
+
+            actions = selected["actions"]
+            if not actions:
+                result = {"reason": selected.get("reason", "no_goal")}
             elif args.dry_run:
                 result = {"reason": "dry_run", "actions": actions}
             else:
-                result = send_command(actions, args.data_dir)
+                command_result = send_command(actions, args.data_dir)
+                result = command_result
+                command_results = command_result.get("results")
+                if isinstance(command_results, list) and all(
+                    isinstance(item, Mapping) for item in command_results
+                ):
+                    mark_pending(
+                        pending,
+                        selected["goal_id"],
+                        actions,
+                        step,
+                        command_results,
+                    )
         except (OSError, ValueError, TimeoutError, CatalogError) as error:
             LOGGER.exception("Agent step %d failed", step)
             result = {"reason": "error", "error": str(error)}
+            selection_reason = "error"
+            selected["skipped"].append(
+                {"goal_id": "agent", "reason": f"error:{error}"}
+            )
 
+        skipped = [*selected.get("skipped", []), *pending_expired]
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "step": step,
             "state": summary,
-            "action_id": selected.get("id"),
+            "goal_id": selected.get("goal_id", "no_goal"),
             "actions": selected.get("actions", []),
+            "skipped": skipped,
+            "selection_reason": selection_reason,
+            "pending": _copy_pending(pending),
+            "pending_expired": pending_expired,
             "result": result,
         }
         _append_log(entry)
