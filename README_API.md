@@ -497,3 +497,74 @@ For build skills, pass prefab IDs copied from `oni_catalog.json`, for example
 `--research-center-id <id>` or both `--bed-id <id> --door-id <id>`. A corridor
 can be supplied as `--corridor x1,y1,x2,y2`. The agent writes JSON Lines logs
 to `logs/agent.jsonl`.
+
+## Room API
+
+Verified against `Assembly-CSharp.dll` with `ilspycmd 8.2`; the code snippets
+below are from the decompiled game sources:
+
+- `Game.roomProber` is a public `RoomProber` field. `Game` constructs it with
+  `roomProber = new RoomProber()` and registers it with the simulation
+  scheduler. `RoomProber.rooms` is the public `List<Room>` containing the
+  room objects currently known to that prober. The prober's flood fill uses
+  the current `Grid`; this is the runtime room list for the active simulation
+  grid.
+- Each `Room` exposes `roomType` and `cavity`. `RoomType` derives from
+  `Resource`, whose public `Id` and `Name` members are defined in
+  `Assembly-CSharp-firstpass.dll`. `RoomType.isSatisfactory(Room)` evaluates
+  its primary and additional constraints; the prober assigns the result using
+  `Db.Get().RoomTypes.GetRoomType(room)`.
+- `CavityInfo.NumCells` returns `cells == null ? 0 : cells.Count`;
+  `CavityInfo.cells` is a `List<int>` of grid cells, and `minX`, `minY`,
+  `maxX`, and `maxY` are also exposed. A representative coordinate can be
+  obtained from the first valid cell with `Grid.CellToXY(int, out int, out
+  int)`. This is a representative cell, not a guaranteed room center.
+- The database type is `Database.RoomTypes`; its `Barracks` field is
+  initialized as `new RoomType("Barracks", ...)`. The constructor passes
+  `RoomConstraints.HAS_BED` as the primary constraint and
+  `NO_INDUSTRIAL_MACHINERY`, `MINIMUM_SIZE_12`, and `MAXIMUM_SIZE_64` as
+  additional constraints. The decompiled predicates verify that a Barracks
+  has at least one building tagged `BedType` and not `Clinic`, contains no
+  building tagged `IndustrialMachinery`, and has `cavity.NumCells` from 12
+  through 64 inclusive. This agrees with the user's tooltip for these
+  constraints.
+- `RoomProber.IsCavityBoundary(int)` treats a cell as a boundary when its
+  `Grid.BuildMasks` includes `Grid.BuildFlags.Solid` or `Foundation`; if
+  neither is present, `Grid.HasDoor[cell]` decides the boundary. The
+  `RefreshModule` then invokes `FloodFill.DepthTraverse` with this boundary
+  predicate. A room is therefore an enclosed cavity according to these
+  grid rules, not merely an arbitrary rectangle.
+
+Representative decompiled source:
+
+```csharp
+// RoomProber.CreateRoom
+room.roomType = Db.Get().RoomTypes.GetRoomType(room);
+
+// RoomConstraints
+MINIMUM_SIZE_12 = new Constraint(null,
+    (Room room) => room.cavity.NumCells >= 12, ...);
+MAXIMUM_SIZE_64 = new Constraint(null,
+    (Room room) => room.cavity.NumCells <= 64, ...);
+HAS_BED = new Constraint((KPrefabID bc) =>
+    bc.HasTag(ConstraintTags.BedType) && !bc.HasTag(ConstraintTags.Clinic), ...);
+```
+
+Recommended state representation:
+
+```json
+{
+  "rooms": [
+    {"type": "Barracks", "size": 20, "x": 12, "y": 8}
+  ]
+}
+```
+
+`type` is `room.roomType.Id`, `size` is `room.cavity.NumCells`, and `x,y`
+come from `Grid.CellToXY(room.cavity.cells[0], ...)`. Skip null or incomplete
+room/cavity entries. Collection cost is O(R), where R is
+`Game.Instance.roomProber.rooms.Count`; only one cell per room needs
+conversion, so it does not scan every grid cell. Cache the serialized array
+for approximately 10 seconds, as with `building_list`, rather than traversing
+the list on every approximately 2-second state write. This is an estimate
+from the iteration shape; no runtime profiling was performed.
