@@ -17,6 +17,7 @@ from .catalog import CatalogError, load_catalog
 from . import planner as planner_module
 from .llm_chooser import choose_action
 from .gemini_manager import plan_goals
+from .metrics import calculate_metrics, write_metrics
 from .oni_client import read_state, send_command
 from .planner import (
     mark_pending,
@@ -274,6 +275,11 @@ def _parse_goals(value: str) -> list[str]:
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="ONI colony file-based goal agent")
     parser.add_argument("--dry-run", action="store_true", help="print choices without sending commands")
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="calculate offline metrics from logs/agent.jsonl and exit",
+    )
     parser.add_argument("--max-steps", type=int, default=0, help="stop after N steps; 0 runs indefinitely")
     parser.add_argument("--interval-seconds", type=float, default=2.0)
     parser.add_argument("--data-dir", type=Path)
@@ -483,6 +489,11 @@ def _update_rule_pending(
 def run(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if args.report:
+        metrics = calculate_metrics(LOG_PATH)
+        write_metrics(metrics, LOG_PATH.parent / "metrics.json")
+        print(json.dumps(metrics, ensure_ascii=False))
+        return 0
     config = {**DEFAULT_CONFIG, **load_agent_config(args.config)}
     if args.barracks_bed_count is not None:
         config["barracks_bed_count"] = args.barracks_bed_count
