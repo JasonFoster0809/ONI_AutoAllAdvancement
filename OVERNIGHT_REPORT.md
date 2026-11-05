@@ -679,3 +679,38 @@ Commits riêng theo bước, không push:
 - bước 2: commit fixtures, pytest và báo cáo này
 
 Không chạy game, deploy hoặc copy DLL. Không có lỗi giống nhau lặp ba lần.
+
+## Bổ sung: trạng thái kho máy, phòng dupe và giường được gán
+
+| Bước | Trạng thái | Kết quả |
+|---|---|---|
+| 1. Xác minh API | XONG | Xác minh bằng `ilspycmd 8.2` trên `Assembly-CSharp.dll`: `Storage.items`, `PrimaryElement.Element.tag.Name`, `PrimaryElement.Mass`; `Game.roomProber.GetRoomOfGameObject`, `Room.roomType.Id`, `Room.cavity.cells`; `StateMachineController.GetSMI<SleepChoreMonitor.Instance>()` và `SleepChoreMonitor.bed.Get(smi)`. |
+| 2. State kho máy | XONG | Mọi công trình built có `Storage` đọc được thêm `stored: [{element, kg}]`; lỗi ở một item bỏ trường `stored` của riêng công trình đó. `operational`/`powered` tiếp tục giữ cách xuất cũ. |
+| 3. State phòng/giường dupe | XONG | Thêm tùy chọn `room_type`, `room_x`, `room_y`, `bed_id`, `bed_x`, `bed_y`; `bed_id` là cell index của GameObject giường được gán. Phòng dùng cell hợp lệ thấp nhất theo y rồi x làm tọa độ đại diện. |
+| 4. Tiêu thụ thức ăn theo chu kỳ | BỎ QUA | `RationTracker.GetAmountConsumed()` cộng `amountsConsumedByID`; `WorldResourceAmountTracker.OnNewDay` chỉ chuyển `currentFrame` sang `previousFrame`, không reset tổng này. Vì vậy không xuất `resources.food_consumption_kcal_per_cycle`; để **CHƯA XÁC MINH** thay vì suy diễn từ tổng tích lũy. |
+| 5. Kiểm tra | XONG | `dotnet build .\OniAgent.csproj`: Build succeeded, 0 Warning(s), 0 Error(s). `python -m pytest -q`: 67 passed. |
+
+Kho và trạng thái phòng/giường được đọc trong `Game.Update` trên main
+thread. Chúng dùng chung nhịp cache `building_list` khoảng 10 giây; không
+thêm tần suất lấy mẫu. Python đọc Algae tương thích cả `stored` list mới và
+mapping cũ. Chọn quét các built building thực sự có `Storage` thay vì phỏng
+đoán danh sách prefab máy; `stored` vắng mặt nếu không có Storage hoặc dữ
+liệu kho không đọc đầy đủ.
+
+Cú pháp PowerShell để xem dữ liệu mới:
+
+```powershell
+$state = Get-Content "$env:USERPROFILE\Documents\Klei\OxygenNotIncluded\oni_state.json" -Raw | ConvertFrom-Json
+$state.dupes | Select-Object name, room_type, room_x, room_y, bed_id, bed_x, bed_y
+$state.building_list | Where-Object { $_.state -eq "built" } | Select-Object id, operational, powered, stored
+```
+
+Commits riêng theo bước, không push:
+
+- `27eeee1` — xác minh API và cập nhật README
+- `e59dda3` — xuất kho theo element, giữ tương thích Python với state cũ
+- `825c392` — thêm trạng thái phòng và giường được gán
+- bước cuối — báo cáo kết quả
+
+C# mới **CHƯA test thật trong game**. Không chạy game, deploy hoặc copy
+DLL; không push. Không có lỗi cùng loại lặp ba lần.
