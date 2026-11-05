@@ -5,6 +5,10 @@ import pytest
 
 from agent.skills import (
     SkillPlanningError,
+    build_mess_area,
+    build_oxygen_setup,
+    build_power_basic,
+    build_toilet_room,
     build_bedroom,
     build_ladder_shaft,
     build_research_area,
@@ -38,6 +42,37 @@ def building(building_id, width=1, height=1, *, unlocked=True):
         "materials": [],
         "unlocked": unlocked,
     }
+
+
+def load_construction_catalog():
+    return load_emergency_fixture("construction_skills_catalog.json")
+
+
+def supported_construction_state():
+    state = supported_state()
+    state["building_list"] = []
+    state["resources"] = {
+        "materials": {"ZincOre": 10000, "SandStone": 10000}
+    }
+    return state
+
+
+def add_built_tiles_to_state(state, actions):
+    rows = state["world"]["map"]
+    origin = state["world"]["origin"]
+    map_height = len(rows)
+    for action in actions:
+        state["building_list"].append(
+            {
+                "id": "Tile",
+                "state": "built",
+                "x": action["x"],
+                "y": action["y"],
+            }
+        )
+        row = map_height - 1 - (action["y"] - origin["y"])
+        column = action["x"] - origin["x"]
+        rows[row] = rows[row][:column] + "F" + rows[row][column + 1 :]
 
 
 def test_bedroom_plans_valid_catalog_builds():
@@ -106,6 +141,148 @@ def test_skills_reject_locked_and_unplaceable_buildings():
     blocked["world"]["map"] = ["X" * 41 for _ in range(41)]
     with pytest.raises(SkillPlanningError, match="no_valid_placement"):
         build_research_area(blocked, [building("Research")], "Research")
+
+
+def test_build_oxygen_setup_uses_unlocked_catalog_and_recommends_algae_delivery():
+    state = supported_construction_state()
+    result = build_oxygen_setup(state, load_construction_catalog())
+    assert [action["id"] for action in result.actions] == ["MineralDeoxidizer"]
+    assert "Algae_delivery_required_after_construction" in result.warnings
+
+    state["building_list"] = [
+        {
+            "id": "MineralDeoxidizer",
+            "state": "built",
+            "stored": [{"element": "Algae", "kg": 0}],
+        }
+    ]
+    result = build_oxygen_setup(state, load_construction_catalog())
+    assert result.actions == []
+    assert result.warnings == ["supply_Algae_to_existing_MineralDeoxidizer"]
+
+
+def test_build_oxygen_setup_does_not_guess_stock_or_build_with_insufficient_material():
+    state = supported_construction_state()
+    state["resources"]["materials"]["ZincOre"] = 199
+    with pytest.raises(SkillPlanningError, match="insufficient_material"):
+        build_oxygen_setup(state, load_construction_catalog())
+
+    state["resources"]["materials"]["ZincOre"] = 1000
+    state["building_list"] = [
+        {"id": "MineralDeoxidizer", "state": "built"}
+    ]
+    result = build_oxygen_setup(state, load_construction_catalog())
+    assert result.actions == []
+    assert result.warnings == ["TODO_VERIFY_algae_stock_unavailable"]
+
+
+def test_build_toilet_room_constructs_enclosure_in_safe_batches():
+    state = supported_construction_state()
+    catalog = load_construction_catalog()
+    first = build_toilet_room(state, catalog)
+    assert len(first.actions) == 12
+    assert {action["id"] for action in first.actions} == {"Tile"}
+    assert "action_limit_12" in first.warnings
+
+    add_built_tiles_to_state(state, first.actions)
+    second = build_toilet_room(state, catalog)
+    assert 0 < len(second.actions) <= 12
+    assert {action["id"] for action in second.actions} == {"Tile"}
+    add_built_tiles_to_state(state, second.actions)
+
+    final = build_toilet_room(state, catalog)
+    assert {action["id"] for action in final.actions} == {
+        "Outhouse",
+        "WashBasin",
+        "Door",
+    }
+    assert len(final.actions) == 3
+    assert final.warnings == ["Dirt_delivery_required_for_Outhouse"]
+
+
+def test_build_toilet_room_honors_existing_building_unlock_and_stock():
+    state = supported_construction_state()
+    catalog = load_construction_catalog()
+    state["building_list"] = [{"id": "Outhouse", "state": "built"}]
+    assert build_toilet_room(state, catalog).warnings == [
+        "existing_outhouse_left_unchanged"
+    ]
+
+    state["building_list"] = []
+    catalog[0]["unlocked"] = False
+    with pytest.raises(SkillPlanningError, match="building_locked"):
+        build_oxygen_setup(state, catalog)
+
+    catalog = load_construction_catalog()
+    state["resources"]["materials"]["SandStone"] = 0
+    with pytest.raises(SkillPlanningError, match="insufficient_material"):
+        build_toilet_room(state, catalog)
+
+
+def test_build_mess_area_uses_catalog_dining_tables_and_avoids_duplicates():
+    state = supported_construction_state()
+    state["dupes"] = [{"name": "Fixture 1"}, {"name": "Fixture 2"}]
+    result = build_mess_area(state, load_construction_catalog())
+    assert len(result.actions) == 2
+    assert [action["id"] for action in result.actions] == [
+        "DiningTable",
+        "DiningTable",
+    ]
+    state["building_list"] = [
+        {"id": action["id"], "state": "under_construction", "x": action["x"], "y": action["y"]}
+        for action in result.actions
+    ]
+    assert build_mess_area(state, load_construction_catalog()).actions == []
+
+
+def test_build_mess_area_checks_unlocked_building_materials_and_placement():
+    state = supported_construction_state()
+    catalog = load_construction_catalog()
+    next(item for item in catalog if item["id"] == "DiningTable")["unlocked"] = False
+    with pytest.raises(SkillPlanningError, match="building_locked"):
+        build_mess_area(state, catalog)
+
+    catalog = load_construction_catalog()
+    state["resources"]["materials"]["ZincOre"] = 199
+    with pytest.raises(SkillPlanningError, match="insufficient_material"):
+        build_mess_area(state, catalog)
+
+    blocked = supported_construction_state()
+    blocked["world"]["map"] = ["X" * 41 for _ in range(41)]
+    with pytest.raises(SkillPlanningError, match="no_valid_placement"):
+        build_mess_area(blocked, load_construction_catalog())
+
+
+def test_build_power_basic_plans_catalog_verified_generator_wire_and_battery():
+    state = supported_construction_state()
+    result = build_power_basic(state, load_construction_catalog())
+    assert [action["id"] for action in result.actions[:2]] == [
+        "ManualGenerator",
+        "Battery",
+    ]
+    wires = [action for action in result.actions if action["id"] == "Wire"]
+    assert len(wires) == 5
+    assert len(result.actions) == 7
+    assert len({action["elements"][0] for action in result.actions}) == 1
+    assert result.warnings == ["basic_power_layout_not_tested_in_game"]
+
+
+def test_build_power_basic_checks_unlocks_materials_and_map_support():
+    state = supported_construction_state()
+    catalog = load_construction_catalog()
+    next(item for item in catalog if item["id"] == "Battery")["unlocked"] = False
+    with pytest.raises(SkillPlanningError, match="building_locked"):
+        build_power_basic(state, catalog)
+
+    catalog = load_construction_catalog()
+    state["resources"]["materials"]["ZincOre"] = 524
+    with pytest.raises(SkillPlanningError, match="insufficient_material"):
+        build_power_basic(state, catalog)
+
+    blocked = supported_construction_state()
+    blocked["world"]["map"] = ["X" * 41 for _ in range(41)]
+    with pytest.raises(SkillPlanningError, match="no_valid_placement"):
+        build_power_basic(blocked, load_construction_catalog())
 
 
 def test_low_oxygen_builds_deoxidizer_near_dupe_with_available_catalog_materials():

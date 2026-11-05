@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from .catalog import (
@@ -31,6 +32,12 @@ class SkillPlanningError(ValueError):
         super().__init__(f"{reason}: {details}" if details else reason)
         self.reason = reason
         self.details = details
+
+
+@dataclass(frozen=True)
+class SkillPlan:
+    actions: list[dict[str, Any]]
+    warnings: list[str]
 
 
 def _map_context(state: Mapping[str, Any]) -> tuple[list[str], dict[str, int], tuple[int, int] | None]:
@@ -227,6 +234,275 @@ def _emergency_stock_budget(
 def _live_dupes(state: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     dupes = state.get("dupes")
     return [dupe for dupe in dupes if isinstance(dupe, Mapping)] if isinstance(dupes, list) else []
+
+
+def _known_buildings(state: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    entries = state.get("building_list")
+    if not isinstance(entries, list) or any(not isinstance(item, Mapping) for item in entries):
+        raise SkillPlanningError("building_list_unavailable")
+    return list(entries)
+
+
+def _element_mass(stored: Any, element: str) -> float | None:
+    if isinstance(stored, Mapping):
+        value = stored.get(element, 0)
+        return _emergency_number(value)
+    if isinstance(stored, list):
+        total = 0.0
+        for item in stored:
+            if not isinstance(item, Mapping):
+                return None
+            if item.get("element") == element:
+                mass = _emergency_number(item.get("kg"))
+                if mass is None or mass < 0:
+                    return None
+                total += mass
+        return total
+    return None
+
+
+def build_oxygen_setup(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+) -> SkillPlan:
+    """Build one unlocked deoxidizer or report stock status for an existing one."""
+    deoxidizer = _get_building(catalog, "MineralDeoxidizer")
+    existing = [
+        entry
+        for entry in _known_buildings(state)
+        if entry.get("id") == "MineralDeoxidizer"
+    ]
+    for entry in existing:
+        if entry.get("state") == "under_construction":
+            return SkillPlan([], ["mineral_deoxidizer_pending"])
+    built = [entry for entry in existing if entry.get("state") == "built"]
+    if built:
+        masses: list[float] = []
+        for entry in built:
+            if "stored" not in entry:
+                return SkillPlan([], ["TODO_VERIFY_algae_stock_unavailable"])
+            mass = _element_mass(entry["stored"], "Algae")
+            if mass is None:
+                return SkillPlan([], ["TODO_VERIFY_algae_stock_unreadable"])
+            masses.append(mass)
+        if sum(masses) <= 0:
+            return SkillPlan([], ["supply_Algae_to_existing_MineralDeoxidizer"])
+        return SkillPlan([], ["existing_MineralDeoxidizer_has_stored_Algae"])
+
+    rows, origin, center = _map_context(state)
+    width, height = building_dimensions(deoxidizer)
+    placement = find_empty_rectangle(
+        rows,
+        origin,
+        width,
+        height,
+        require_floor=True,
+        center=center,
+    )
+    if placement is None:
+        raise SkillPlanningError("no_valid_placement")
+    action = _build_action(deoxidizer, state, placement["x"], placement["y"])
+    return SkillPlan([action], ["Algae_delivery_required_after_construction"])
+
+
+def build_mess_area(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+) -> SkillPlan:
+    """Add one catalog-verified DiningTable per live dupe, up to 12 this turn."""
+    table = _get_building(catalog, "DiningTable")
+    entries = _known_buildings(state)
+    existing_count = sum(
+        entry.get("id") == "DiningTable"
+        and entry.get("state") in {"built", "under_construction"}
+        for entry in entries
+    )
+    target_count = max(1, len(_live_dupes(state)))
+    shortage = max(0, target_count - existing_count)
+    if shortage == 0:
+        return SkillPlan([], [])
+
+    width, height = building_dimensions(table)
+    rows, origin, center = _map_context(state)
+    candidates = find_empty_rectangle_candidates(
+        rows,
+        origin,
+        width,
+        height,
+        center=center,
+    )
+    placements: list[dict[str, int]] = []
+    for candidate in candidates:
+        if len(placements) >= min(shortage, 12):
+            break
+        if candidate["row"] + 1 >= len(rows) or any(
+            rows[candidate["row"] + 1][column] not in {"#", "F", "X"}
+            for column in range(candidate["column"], candidate["column"] + width)
+        ):
+            continue
+        placements.append(candidate)
+    if len(placements) < min(shortage, 12):
+        raise SkillPlanningError("no_valid_placement")
+
+    materials_by_key, selected_materials = _choose_combined_materials(
+        state,
+        ((table, len(placements)),),
+    )
+    elements = _elements_for_building(table, materials_by_key, selected_materials)
+    actions = [
+        _build_action(table, state, placement["x"], placement["y"], elements)
+        for placement in placements
+    ]
+    warnings = ["action_limit_12"] if shortage > len(actions) else []
+    return SkillPlan(actions, warnings)
+
+
+def build_toilet_room(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+) -> SkillPlan:
+    """Build a tiled, door-enclosed Latrine footprint in batches of at most 12."""
+    entries = _known_buildings(state)
+    if any(
+        entry.get("id") == "Outhouse"
+        and entry.get("state") in {"built", "under_construction"}
+        for entry in entries
+    ):
+        return SkillPlan([], ["existing_outhouse_left_unchanged"])
+
+    outhouse = _get_building(catalog, "Outhouse")
+    basin = _get_building(catalog, "WashBasin")
+    door = _get_building(catalog, "Door")
+    tile = _get_building(catalog, "Tile")
+    outhouse_width, outhouse_height = building_dimensions(outhouse)
+    basin_width, basin_height = building_dimensions(basin)
+    door_width, door_height = building_dimensions(door)
+    tile_width, tile_height = building_dimensions(tile)
+    if (tile_width, tile_height) != (1, 1) or door_width != 1:
+        raise SkillPlanningError("invalid_enclosure_dimensions")
+    if outhouse_height != basin_height or outhouse_width + basin_width > 6:
+        raise SkillPlanningError("toilet_room_layout_unavailable")
+
+    rows, origin, center = _map_context(state)
+    existing_tiles = _existing_tile_positions(state, "Tile")
+    placement = _find_barracks_placement(
+        rows,
+        origin,
+        6,
+        3,
+        door_height,
+        existing_tiles,
+        center,
+    )
+    if placement is None:
+        raise SkillPlanningError("no_valid_placement")
+
+    new_tiles = placement["new_tiles"]
+    if new_tiles:
+        tile_batch = new_tiles[:12]
+        materials_by_key, selected_materials = _choose_combined_materials(
+            state,
+            ((tile, len(tile_batch)),),
+        )
+        elements = _elements_for_building(tile, materials_by_key, selected_materials)
+        actions = [
+            _build_action(tile, state, x, y, elements)
+            for x, y in tile_batch
+        ]
+        warnings = ["enclosure_build_continues_after_state_ack"]
+        if len(new_tiles) > len(tile_batch):
+            warnings.append("action_limit_12")
+        return SkillPlan(actions, warnings)
+
+    outhouse_x = placement["left_x"] + 2
+    basin_x = placement["left_x"]
+    if placement["door_x"] == placement["left_x"] - 1:
+        basin_x = placement["left_x"] + 4
+    materials_by_key, selected_materials = _choose_combined_materials(
+        state,
+        ((outhouse, 1), (basin, 1), (door, 1)),
+    )
+    actions = [
+        _build_action(
+            outhouse,
+            state,
+            _pivot_x(outhouse_x, outhouse_width),
+            placement["bottom_y"],
+            _elements_for_building(outhouse, materials_by_key, selected_materials),
+        ),
+        _build_action(
+            basin,
+            state,
+            _pivot_x(basin_x, basin_width),
+            placement["bottom_y"],
+            _elements_for_building(basin, materials_by_key, selected_materials),
+        ),
+        _build_action(
+            door,
+            state,
+            placement["door_x"],
+            placement["door_y"],
+            _elements_for_building(door, materials_by_key, selected_materials),
+        ),
+    ]
+    return SkillPlan(actions, ["Dirt_delivery_required_for_Outhouse"])
+
+
+def build_power_basic(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+) -> SkillPlan:
+    """Place a generator, its wire row, and battery on a supported clear footprint."""
+    generator = _get_building(catalog, "ManualGenerator")
+    wire = _get_building(catalog, "Wire")
+    battery = _get_building(catalog, "Battery")
+    generator_width, generator_height = building_dimensions(generator)
+    wire_width, wire_height = building_dimensions(wire)
+    battery_width, battery_height = building_dimensions(battery)
+    if (wire_width, wire_height) != (1, 1):
+        raise SkillPlanningError("invalid_wire_dimensions")
+
+    rows, origin, center = _map_context(state)
+    layout_width = generator_width + 2 + battery_width
+    layout_height = max(generator_height, battery_height)
+    placement = find_empty_rectangle(
+        rows,
+        origin,
+        layout_width,
+        layout_height,
+        require_floor=True,
+        center=center,
+    )
+    if placement is None:
+        raise SkillPlanningError("no_valid_placement")
+
+    battery_x = placement["left_x"] + generator_width + 2
+    materials_by_key, selected_materials = _choose_combined_materials(
+        state,
+        ((generator, 1), (battery, 1), (wire, layout_width)),
+    )
+    actions = [
+        _build_action(
+            generator,
+            state,
+            _pivot_x(placement["left_x"], generator_width),
+            placement["bottom_y"],
+            _elements_for_building(generator, materials_by_key, selected_materials),
+        ),
+        _build_action(
+            battery,
+            state,
+            _pivot_x(battery_x, battery_width),
+            placement["bottom_y"],
+            _elements_for_building(battery, materials_by_key, selected_materials),
+        ),
+    ]
+    wire_elements = _elements_for_building(wire, materials_by_key, selected_materials)
+    actions.extend(
+        _build_action(wire, state, placement["left_x"] + offset, placement["bottom_y"], wire_elements)
+        for offset in range(layout_width)
+    )
+    return SkillPlan(actions, ["basic_power_layout_not_tested_in_game"])
 
 
 def _dupe_position(dupe: Mapping[str, Any]) -> tuple[int, int] | None:

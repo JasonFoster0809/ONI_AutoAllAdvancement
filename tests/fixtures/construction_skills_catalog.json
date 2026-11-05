@@ -1,0 +1,65 @@
+[
+  {
+    "id": "MineralDeoxidizer",
+    "unlocked": true,
+    "width": 1,
+    "height": 2,
+    "materials": [{"category": "Metal", "mass_kg": 200, "options": ["ZincOre"]}]
+  },
+  {
+    "id": "Outhouse",
+    "unlocked": true,
+    "width": 2,
+    "height": 3,
+    "materials": [{"category": "BuildableRaw&BuildingWood", "mass_kg": 200, "options": ["SandStone"]}]
+  },
+  {
+    "id": "WashBasin",
+    "unlocked": true,
+    "width": 2,
+    "height": 3,
+    "materials": [{"category": "BuildableRaw&Metal", "mass_kg": 50, "options": ["SandStone", "ZincOre"]}]
+  },
+  {
+    "id": "Door",
+    "unlocked": true,
+    "width": 1,
+    "height": 2,
+    "materials": [{"category": "Metal", "mass_kg": 100, "options": ["ZincOre"]}]
+  },
+  {
+    "id": "Tile",
+    "unlocked": true,
+    "width": 1,
+    "height": 1,
+    "materials": [{"category": "BuildableRaw", "mass_kg": 200, "options": ["SandStone"]}]
+  },
+  {
+    "id": "DiningTable",
+    "unlocked": true,
+    "width": 1,
+    "height": 1,
+    "materials": [{"category": "Metal", "mass_kg": 200, "options": ["ZincOre"]}]
+  },
+  {
+    "id": "ManualGenerator",
+    "unlocked": true,
+    "width": 2,
+    "height": 2,
+    "materials": [{"category": "Metal", "mass_kg": 200, "options": ["ZincOre"]}]
+  },
+  {
+    "id": "Wire",
+    "unlocked": true,
+    "width": 1,
+    "height": 1,
+    "materials": [{"category": "Metal", "mass_kg": 25, "options": ["ZincOre"]}]
+  },
+  {
+    "id": "Battery",
+    "unlocked": true,
+    "width": 1,
+    "height": 2,
+    "materials": [{"category": "Metal", "mass_kg": 200, "options": ["ZincOre"]}]
+  }
+]
