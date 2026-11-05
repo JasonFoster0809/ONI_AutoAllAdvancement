@@ -261,6 +261,10 @@ cũ, đồng thời xác nhận build skill gửi phần tử vào `elements`. K
 thử cuối: `python -m pytest -q` — **29 passed**; `dotnet build` — **Build
 succeeded, 0 Warning(s), 0 Error(s)**.
 
+Kiểm tra lại ngày 2026-11-05: `python -m pytest -q` — **53 passed in 0.52s**;
+`dotnet build` — **Build succeeded, 0 Warning(s), 0 Error(s)**. C# mới
+**CHƯA test thật trong game**.
+
 Cú pháp `list_buildings` hiện có:
 
 ```json
