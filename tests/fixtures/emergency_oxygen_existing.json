@@ -1,0 +1,43 @@
+{
+  "cycle": 10,
+  "resources": {
+    "food_kcal": 50000,
+    "materials": {"Cuprite": 500, "Algae": 100}
+  },
+  "dupes": [
+    {
+      "name": "Fixture Dupe",
+      "x": 0,
+      "y": 0,
+      "calories_kcal": 2000,
+      "stress": 0,
+      "job_priorities": {"Farming": 3, "Cook": 3, "Ranching": 3, "Dig": 3, "Build": 3}
+    }
+  ],
+  "environment": {"oxygen_avg_g": 40, "temperature_avg_k": 295},
+  "alerts": [],
+  "building_list": [
+    {
+      "id": "MineralDeoxidizer",
+      "x": 1,
+      "y": 0,
+      "state": "built",
+      "stored": {"Algae": 0}
+    }
+  ],
+  "world": {
+    "origin": {"x": -4, "y": -4},
+    "start": {"x": 0, "y": 0},
+    "map": [
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      "#########"
+    ]
+  }
+}

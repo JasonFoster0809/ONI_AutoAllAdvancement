@@ -603,3 +603,79 @@ Commit riêng từng giai đoạn, không push:
 C# mới **CHƯA test thật trong game**. Không deploy, không copy DLL, không
 chạy ONI; các action đã test thật không bị sửa. Chưa có lỗi build/pytest nào
 lặp ba lần.
+
+## Bổ sung: hành động sửa khẩn cấp Python
+
+| Bước | Trạng thái | Kết quả |
+|---|---|---|
+| 0. Kiểm kê state/catalog | XONG | Đã đọc state/catalog cục bộ và ghi dữ liệu hiện có, công trình unlocked, cùng giới hạn vào `playbook.md`. |
+| 1. Kế hoạch hành động | XONG | Python tạo hành động oxy/thức ăn/stress, cảnh báo-only cho nhiệt; giới hạn 12 action/lượt, cooldown 1 cycle, pending tối đa 2 cycle. |
+| 2. Fixtures/pytest/dry-run | XONG | **67 passed**; dry-run một bước trên state thật không phát lệnh. |
+
+### Chính sách an toàn đã chọn
+
+- Thức ăn thấp là tổng `resources.food_kcal` dưới 1,000 kcal nhân số dupes
+  (ước tính nhu cầu một cycle); priority `Farming`, `Cook`, `Ranching` đặt
+  về 4. Đây là ngưỡng lập kế hoạch, không phải ngưỡng nguy hiểm ONI.
+- Stress đặt `Dig`/`Build` của từng dupe stress cao về 2. Số Bed, Outhouse
+  và WashBasin được so với tổng live dupes; mục tiêu an toàn là tối thiểu
+  một công trình mỗi loại mỗi dupe. Đếm cả `under_construction`; không suy
+  đoán phân công/công suất tiện ích.
+- Oxy: chỉ xây đúng catalog ID `MineralDeoxidizer` nếu chưa có built hoặc
+  under-construction, ID unlocked, vật liệu đủ theo `mass_kg`, và có ô nền
+  hợp lệ trong connected map area của dupe. Nếu công trình đã có, `stored`
+  Algae bằng 0 cho cảnh báo `thiếu_algae`; trường storage vắng/không đọc
+  được cho `thiếu_dữ_liệu_algae`, không giả định kho trống và không xây
+  trùng. Local state trên đĩa hiện có hai deoxidizer nhưng chưa có các field
+  `operational`/`powered`/`stored`.
+- Ưu tiên chỉ được gửi nếu nhóm đó tồn tại trong `job_priorities` của state.
+  Build bị bỏ qua khi thiếu `mass_kg`, vật liệu, tọa độ/phòng suy ra được,
+  hoặc ô hợp lệ; không gửi build action dự đoán sẽ trả `insufficient_material`.
+- Nhiệt độ ngoài band chỉ ghi cảnh báo; không đặt công trình nhiệt.
+- Pending chỉ giữ các action được mod trả `ok`; build/priority được đối chiếu
+  với state kế tiếp. Pending hết hạn sau 2 cycle; cooldown là 1 cycle. Với
+  state cũ thiếu room/storage/job fields, lựa chọn an toàn là bỏ qua action
+  phụ thuộc trường đó và ghi `skipped`.
+- Không sửa action C# đã test thật. Chỉ thêm khóa mới vào `agent/config.json`:
+  `emergency_food_kcal_per_dupe`, `emergency_max_actions_per_turn`,
+  `emergency_cooldown_cycles`, `emergency_pending_cycles`.
+
+### Fixtures và xác minh
+
+Fixtures `emergency_oxygen_state.json`, `emergency_oxygen_existing.json`,
+`emergency_food_state.json`, `emergency_stress_state.json`,
+`emergency_temperature_state.json`, và `emergency_catalog.json` kiểm tra:
+vật liệu đủ/thiếu, catalog locked, deoxidizer có kho trống/kho chưa biết,
+priority changes, amenities thiếu/đủ, map placement, cảnh báo nhiệt, action
+limit, cooldown, pending và không gửi lệnh trùng.
+
+`python -m pytest -q` — **67 passed in 0.44s**.
+
+Lệnh dry-run một bước trên state/catalog thật:
+
+```powershell
+python -m agent.agent_main --dry-run --max-steps 1 --data-dir "$env:USERPROFILE\Documents\Klei\OxygenNotIncluded"
+```
+
+Kết quả thực tế: state cycle 4, 4 dupes, food 19,358.32 kcal; snapshot file
+cũ **10,513.1 giây** nên kết quả không phải quan sát colony hiện thời.
+Không có emergency nào kích hoạt; planner ghi:
+
+```json
+{"goal_id":"no_goal","actions":[],"skipped":[{"goal_id":"research_target","reason":"already_done"},{"goal_id":"barracks","reason":"already_done"}],"result":{"reason":"no_goal"}}
+```
+
+Không gửi command trong dry-run. Không sửa C# vì chỉ thiếu trạng thái
+per-building trong snapshot cũ; Python bỏ qua an toàn khi dữ liệu đó không
+có. Thiếu dữ liệu còn lại: vị trí/ranh giới room gắn với từng dupe không có
+field riêng (dùng connected cells của map làm ước lượng); xu hướng tiêu thụ
+và readiness recipe thức ăn; phân công/công suất Bed/Outhouse/WashBasin;
+nhiệt độ từng dupe/thành phần; tình trạng kho Algae trong state snapshot cũ.
+
+Commits riêng theo bước, không push:
+
+- `4ccb89c` — kiểm kê state/catalog và ghi playbook
+- `afefb28` — hành động khẩn cấp Python
+- bước 2: commit fixtures, pytest và báo cáo này
+
+Không chạy game, deploy hoặc copy DLL. Không có lỗi giống nhau lặp ba lần.

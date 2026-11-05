@@ -5,6 +5,7 @@ from pathlib import Path
 from agent.rules import (
     alert_rule,
     choose_emergency_action,
+    detect_emergency,
     hunger_rule,
     oxygen_rule,
     oxygen_value,
@@ -99,6 +100,15 @@ def test_hunger_rule():
     state = load_fixture("hungry.json")
     assert hunger_rule(state) == "dupe_hungry"
     assert choose_emergency_action(state, [])["reason"] == "dupe_hungry"
+
+
+def test_hunger_rule_detects_low_total_stock_without_low_dupe_calories():
+    state = load_fixture("emergency_food_state.json")
+    assert hunger_rule(state) == "food_stock_low"
+    assert detect_emergency(state) == {
+        "category": "food",
+        "reason": "food_stock_low",
+    }
 
 
 def test_stress_rule_uses_state_or_alert():

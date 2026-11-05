@@ -1,0 +1,45 @@
+{
+  "cycle": 10,
+  "resources": {
+    "food_kcal": 50000,
+    "materials": {"SandStone": 1000, "Cuprite": 500}
+  },
+  "dupes": [
+    {
+      "name": "Stressed Dupe",
+      "x": 0,
+      "y": 0,
+      "calories_kcal": 2000,
+      "stress": 95,
+      "job_priorities": {"Farming": 3, "Cook": 3, "Ranching": 3, "Dig": 3, "Build": 3}
+    },
+    {
+      "name": "Other Dupe",
+      "x": 1,
+      "y": 0,
+      "calories_kcal": 2000,
+      "stress": 10,
+      "job_priorities": {"Farming": 3, "Cook": 3, "Ranching": 3, "Dig": 3, "Build": 3}
+    }
+  ],
+  "environment": {"oxygen_avg_g": 500, "temperature_avg_k": 295},
+  "alerts": [],
+  "building_list": [
+    {"id": "Bed", "x": 1, "y": 0, "state": "built"}
+  ],
+  "world": {
+    "origin": {"x": -5, "y": -4},
+    "start": {"x": 0, "y": 0},
+    "map": [
+      "...........",
+      "...........",
+      "...........",
+      "...........",
+      "...........",
+      "...........",
+      "...........",
+      "...........",
+      "###########"
+    ]
+  }
+}

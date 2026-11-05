@@ -1,0 +1,11 @@
+{
+  "cycle": 10,
+  "resources": {
+    "food_kcal": 50000,
+    "materials": {"Cuprite": 500}
+  },
+  "dupes": [],
+  "environment": {"oxygen_avg_g": 500, "temperature_avg_k": 320},
+  "alerts": [],
+  "building_list": []
+}

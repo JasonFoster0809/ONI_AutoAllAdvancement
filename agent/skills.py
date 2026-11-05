@@ -259,6 +259,38 @@ def _building_entry_count(
     )
 
 
+def _reserved_building_cells(
+    state: Mapping[str, Any], catalog: Sequence[Mapping[str, Any]]
+) -> set[tuple[int, int]]:
+    buildings = state.get("building_list")
+    if not isinstance(buildings, list):
+        return set()
+    reserved: set[tuple[int, int]] = set()
+    for entry in buildings:
+        if (
+            not isinstance(entry, Mapping)
+            or entry.get("state") not in {"built", "under_construction"}
+        ):
+            continue
+        x, y = entry.get("x"), entry.get("y")
+        if (
+            isinstance(x, bool)
+            or not isinstance(x, int)
+            or isinstance(y, bool)
+            or not isinstance(y, int)
+        ):
+            continue
+        try:
+            building = get_building(catalog, str(entry.get("id", "")))
+            width, height = building_dimensions(building)
+        except CatalogError:
+            continue
+        for dx in range(width):
+            for dy in range(height):
+                reserved.add((x + dx, y + dy))
+    return reserved
+
+
 def _emergency_build_action(
     state: Mapping[str, Any],
     catalog: Sequence[Mapping[str, Any]],
@@ -375,7 +407,7 @@ def plan_emergency_actions(
                 rows,
                 origin,
                 room_cells,
-                set(),
+                _reserved_building_cells(state, catalog),
                 _emergency_stock_budget(state),
             )
         except SkillPlanningError as error:
@@ -420,7 +452,7 @@ def plan_emergency_actions(
             plan["skipped"].append({"reason": error.reason})
             return plan
 
-        reserved: set[tuple[int, int]] = set()
+        reserved = _reserved_building_cells(state, catalog)
         for building_id in ("Bed", "Outhouse", "WashBasin"):
             shortage = max(0, len(dupes) - _building_entry_count(state, building_id))
             for _ in range(shortage):

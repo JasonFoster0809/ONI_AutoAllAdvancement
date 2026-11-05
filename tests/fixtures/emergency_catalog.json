@@ -1,0 +1,54 @@
+[
+  {
+    "id": "MineralDeoxidizer",
+    "width": 1,
+    "height": 2,
+    "materials": [
+      {
+        "category": "Metal",
+        "options": ["Cuprite"],
+        "mass_kg": 200
+      }
+    ],
+    "unlocked": true
+  },
+  {
+    "id": "Bed",
+    "width": 2,
+    "height": 2,
+    "materials": [
+      {
+        "category": "BuildableRaw&BuildingWood",
+        "options": ["SandStone"],
+        "mass_kg": 200
+      }
+    ],
+    "unlocked": true
+  },
+  {
+    "id": "Outhouse",
+    "width": 2,
+    "height": 3,
+    "materials": [
+      {
+        "category": "BuildableRaw&BuildingWood",
+        "options": ["SandStone"],
+        "mass_kg": 200
+      }
+    ],
+    "unlocked": true
+  },
+  {
+    "id": "WashBasin",
+    "width": 2,
+    "height": 3,
+    "materials": [
+      {
+        "category": "BuildableRaw&Metal",
+        "options": ["SandStone"],
+        "mass_kg": 50
+      }
+    ],
+    "unlocked": true
+  }
+]

@@ -9,6 +9,7 @@ from agent.skills import (
     build_ladder_shaft,
     build_research_area,
     dig_corridor,
+    plan_emergency_actions,
 )
 
 
@@ -17,6 +18,10 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 def load_empty_map():
     return json.loads((FIXTURES / "empty_map.json").read_text(encoding="utf-8"))
+
+
+def load_emergency_fixture(name):
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
 def supported_state():
@@ -101,3 +106,150 @@ def test_skills_reject_locked_and_unplaceable_buildings():
     blocked["world"]["map"] = ["X" * 41 for _ in range(41)]
     with pytest.raises(SkillPlanningError, match="no_valid_placement"):
         build_research_area(blocked, [building("Research")], "Research")
+
+
+def test_low_oxygen_builds_deoxidizer_near_dupe_with_available_catalog_materials():
+    state = load_emergency_fixture("emergency_oxygen_state.json")
+    catalog = load_emergency_fixture("emergency_catalog.json")
+
+    plan = plan_emergency_actions(state, catalog, "oxygen", "low_oxygen")
+
+    assert plan["actions"] == [
+        {
+            "type": "build",
+            "id": "MineralDeoxidizer",
+            "x": 0,
+            "y": -3,
+            "orientation": "Neutral",
+            "elements": ["Cuprite"],
+            "priority": 5,
+        }
+    ]
+    assert plan["skipped"] == []
+
+
+def test_low_oxygen_skips_locked_or_insufficiently_stocked_building():
+    state = load_emergency_fixture("emergency_oxygen_state.json")
+    catalog = load_emergency_fixture("emergency_catalog.json")
+    state["resources"]["materials"]["Cuprite"] = 199
+    plan = plan_emergency_actions(state, catalog, "oxygen", "low_oxygen")
+    assert plan["actions"] == []
+    assert plan["skipped"] == [{"reason": "insufficient_material"}]
+
+    state["resources"]["materials"]["Cuprite"] = 500
+    catalog[0]["unlocked"] = False
+    plan = plan_emergency_actions(state, catalog, "oxygen", "low_oxygen")
+    assert plan["actions"] == []
+    assert plan["skipped"] == [{"reason": "building_locked"}]
+
+
+def test_existing_deoxidizer_warns_without_building_duplicate():
+    state = load_emergency_fixture("emergency_oxygen_existing.json")
+    catalog = load_emergency_fixture("emergency_catalog.json")
+    plan = plan_emergency_actions(state, catalog, "oxygen", "low_oxygen")
+    assert plan["actions"] == []
+    assert plan["skipped"] == [{"reason": "thiếu_algae"}]
+
+    del state["building_list"][0]["stored"]
+    plan = plan_emergency_actions(state, catalog, "oxygen", "low_oxygen")
+    assert plan["actions"] == []
+    assert plan["skipped"] == [{"reason": "thiếu_dữ_liệu_algae"}]
+
+
+def test_low_food_raises_available_job_priorities_without_building():
+    state = load_emergency_fixture("emergency_food_state.json")
+    catalog = load_emergency_fixture("emergency_catalog.json")
+    plan = plan_emergency_actions(state, catalog, "food", "food_stock_low")
+
+    assert plan["actions"] == [
+        {
+            "type": "set_dupe_priority",
+            "dupe": "Hungry Dupe",
+            "group": group,
+            "priority": 4,
+        }
+        for group in ("Farming", "Cook", "Ranching")
+    ]
+    assert all(action["type"] != "build" for action in plan["actions"])
+
+    for action in plan["actions"]:
+        state["dupes"][0]["job_priorities"][action["group"]] = action["priority"]
+    assert plan_emergency_actions(state, catalog, "food", "food_stock_low")["actions"] == []
+
+
+def test_high_stress_lowers_priorities_and_builds_only_facility_shortage():
+    state = load_emergency_fixture("emergency_stress_state.json")
+    catalog = load_emergency_fixture("emergency_catalog.json")
+    plan = plan_emergency_actions(state, catalog, "stress", "dupe_high_stress")
+
+    assert plan["actions"][:2] == [
+        {
+            "type": "set_dupe_priority",
+            "dupe": "Stressed Dupe",
+            "group": "Dig",
+            "priority": 2,
+        },
+        {
+            "type": "set_dupe_priority",
+            "dupe": "Stressed Dupe",
+            "group": "Build",
+            "priority": 2,
+        },
+    ]
+    builds = [action for action in plan["actions"] if action["type"] == "build"]
+    assert [action["id"] for action in builds] == [
+        "Bed",
+        "Outhouse",
+        "Outhouse",
+        "WashBasin",
+        "WashBasin",
+    ]
+    assert len({(action["x"], action["y"]) for action in builds}) == len(builds)
+    assert all(action["elements"] == ["SandStone"] for action in builds)
+
+
+def test_high_stress_skips_builds_when_material_budget_is_insufficient():
+    state = load_emergency_fixture("emergency_stress_state.json")
+    catalog = load_emergency_fixture("emergency_catalog.json")
+    state["resources"]["materials"]["SandStone"] = 300
+
+    plan = plan_emergency_actions(state, catalog, "stress", "dupe_high_stress")
+
+    assert [action["id"] for action in plan["actions"] if action["type"] == "build"] == [
+        "Bed",
+        "WashBasin",
+        "WashBasin",
+    ]
+    assert {
+        (item.get("building"), item["reason"]) for item in plan["skipped"]
+    } == {("Outhouse", "insufficient_material")}
+
+
+def test_high_stress_does_not_repeat_existing_amenities_or_lowered_priorities():
+    state = load_emergency_fixture("emergency_stress_state.json")
+    catalog = load_emergency_fixture("emergency_catalog.json")
+    for building_id in ("Bed", "Outhouse", "WashBasin"):
+        state["building_list"].extend(
+            [
+                {"id": building_id, "x": 1, "y": 1, "state": "built"},
+                {"id": building_id, "x": 2, "y": 1, "state": "under_construction"},
+            ]
+        )
+    state["dupes"][0]["job_priorities"]["Dig"] = 1
+    state["dupes"][0]["job_priorities"]["Build"] = 2
+
+    plan = plan_emergency_actions(state, catalog, "stress", "dupe_high_stress")
+
+    assert plan["actions"] == []
+
+
+def test_temperature_emergency_is_warning_only():
+    state = load_emergency_fixture("emergency_temperature_state.json")
+    catalog = load_emergency_fixture("emergency_catalog.json")
+
+    plan = plan_emergency_actions(
+        state, catalog, "temperature", "temperature_high"
+    )
+
+    assert plan["actions"] == []
+    assert plan["skipped"] == [{"reason": "temperature_warning_only"}]
