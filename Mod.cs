@@ -191,6 +191,34 @@ namespace OniAgent
             }
             sb.Append("}");
 
+            if (activeWorld != null && hasStartPosition)
+            {
+                try
+                {
+                    string environmentJson = BuildEnvironmentStateJson(activeWorld, startX, startY);
+                    AppendPropertyPrefix(sb, ref hasRootProperty, "environment");
+                    sb.Append(environmentJson);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("[OniAgent] Could not read telepad environment: " + e);
+                }
+            }
+
+            if (activeWorld != null)
+            {
+                try
+                {
+                    string powerJson = BuildPowerStateJson(activeWorld);
+                    AppendPropertyPrefix(sb, ref hasRootProperty, "power");
+                    sb.Append(powerJson);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("[OniAgent] Could not read power state: " + e);
+                }
+            }
+
             try
             {
                 UpdateBuildingListCache(activeWorld, hasStartPosition, startX, startY);
@@ -469,6 +497,18 @@ namespace OniAgent
                 Debug.LogWarning("[OniAgent] Could not evaluate alerts: " + e);
             }
             sb.Append("]");
+
+            try
+            {
+                string achievementJson = BuildAchievementStateJson();
+                AppendPropertyPrefix(sb, ref hasRootProperty, "achievements");
+                sb.Append(achievementJson);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not read achievements: " + e);
+            }
+
             sb.Append("}");
 
             try
@@ -1860,6 +1900,199 @@ namespace OniAgent
                 AppendStringProperty(sb, ref hasAlertProperty, "name", dupeName);
             }
             sb.Append("}");
+        }
+
+        private static string BuildAchievementStateJson()
+        {
+            var database = Db.Get();
+            var saveGame = SaveGame.Instance;
+            if (database == null || saveGame == null)
+            {
+                throw new InvalidOperationException("Achievement database or save game is unavailable.");
+            }
+
+            var tracker = saveGame.ColonyAchievementTracker;
+            if (tracker == null)
+            {
+                throw new InvalidOperationException("Colony achievement tracker is unavailable.");
+            }
+
+            var sb = new StringBuilder("[");
+            bool hasAchievement = false;
+            var achievements = database.ColonyAchievements.resources;
+            for (int i = 0; i < achievements.Count; i++)
+            {
+                var achievement = achievements[i];
+                try
+                {
+                    if (!tracker.achievements.TryGetValue(achievement.Id, out var status) || status == null)
+                    {
+                        continue;
+                    }
+
+                    var achievementJson = new StringBuilder("{");
+                    bool hasProperty = false;
+                    AppendStringProperty(achievementJson, ref hasProperty, "id", achievement.Id);
+                    AppendStringProperty(achievementJson, ref hasProperty, "name", achievement.Name);
+                    AppendPropertyPrefix(achievementJson, ref hasProperty, "achieved");
+                    achievementJson.Append(status.success ? "true" : "false");
+                    AppendPropertyPrefix(achievementJson, ref hasProperty, "progress");
+                    achievementJson.Append("[");
+
+                    bool hasProgress = false;
+                    var requirements = status.Requirements;
+                    for (int requirementIndex = 0; requirementIndex < requirements.Count; requirementIndex++)
+                    {
+                        string progress = requirements[requirementIndex].GetProgress(status.success);
+                        if (string.IsNullOrEmpty(progress))
+                        {
+                            continue;
+                        }
+                        if (hasProgress)
+                        {
+                            achievementJson.Append(",");
+                        }
+                        hasProgress = true;
+                        achievementJson.Append("\"").Append(EscapeJsonString(progress)).Append("\"");
+                    }
+
+                    achievementJson.Append("]}");
+                    if (hasAchievement)
+                    {
+                        sb.Append(",");
+                    }
+                    sb.Append(achievementJson);
+                    hasAchievement = true;
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("[OniAgent] Could not read achievement " + achievement.Id + ": " + e);
+                }
+            }
+
+            sb.Append("]");
+            return sb.ToString();
+        }
+
+        private static string BuildEnvironmentStateJson(WorldContainer world, int centerX, int centerY)
+        {
+            float temperatureTotal = 0f;
+            float oxygenMassKg = 0f;
+            float carbonDioxideMassKg = 0f;
+            int validCellCount = 0;
+
+            for (int y = centerY - 5; y <= centerY + 5; y++)
+            {
+                for (int x = centerX - 5; x <= centerX + 5; x++)
+                {
+                    int cell = Grid.XYToCell(x, y);
+                    if (!Grid.IsValidCell(cell) || !Grid.IsValidCellInWorld(cell, world.id))
+                    {
+                        continue;
+                    }
+
+                    validCellCount++;
+                    temperatureTotal += Grid.Temperature[cell];
+                    var element = Grid.Element[cell];
+                    if (!element.IsGas)
+                    {
+                        continue;
+                    }
+                    if (element.id == SimHashes.Oxygen)
+                    {
+                        oxygenMassKg += Grid.Mass[cell];
+                    }
+                    else if (element.id == SimHashes.CarbonDioxide)
+                    {
+                        carbonDioxideMassKg += Grid.Mass[cell];
+                    }
+                }
+            }
+
+            if (validCellCount == 0)
+            {
+                throw new InvalidOperationException("No valid cells near the telepad.");
+            }
+
+            var sb = new StringBuilder("{");
+            bool hasProperty = false;
+            AppendNumberProperty(sb, ref hasProperty, "temperature_avg_k", temperatureTotal / validCellCount);
+            AppendNumberProperty(sb, ref hasProperty, "oxygen_avg_g", oxygenMassKg * 1000f / validCellCount);
+            AppendNumberProperty(sb, ref hasProperty, "co2_avg_g", carbonDioxideMassKg * 1000f / validCellCount);
+            sb.Append("}");
+            return sb.ToString();
+        }
+
+        private static string BuildPowerStateJson(WorldContainer world)
+        {
+            float batteryJoules = 0f;
+            float batteryCapacityJoules = 0f;
+            var circuitIds = new HashSet<ushort>();
+            var circuitManager = Game.Instance.circuitManager;
+            if (circuitManager == null)
+            {
+                throw new InvalidOperationException("Circuit manager is unavailable.");
+            }
+
+            var batteries = Components.Batteries.Items;
+            for (int i = 0; i < batteries.Count; i++)
+            {
+                var battery = batteries[i];
+                int cell = battery.PowerCell;
+                if (!Grid.IsValidCell(cell) || !Grid.IsValidCellInWorld(cell, world.id))
+                {
+                    continue;
+                }
+
+                batteryJoules += battery.JoulesAvailable;
+                batteryCapacityJoules += battery.Capacity;
+                ushort circuitId = circuitManager.GetCircuitID(cell);
+                if (circuitId != ushort.MaxValue)
+                {
+                    circuitIds.Add(circuitId);
+                }
+            }
+
+            var generators = Components.Generators.Items;
+            for (int i = 0; i < generators.Count; i++)
+            {
+                var generator = generators[i];
+                int cell = generator.PowerCell;
+                if (!Grid.IsValidCell(cell) || !Grid.IsValidCellInWorld(cell, world.id))
+                {
+                    continue;
+                }
+
+                ushort circuitId = circuitManager.GetCircuitID(cell);
+                if (circuitId != ushort.MaxValue)
+                {
+                    circuitIds.Add(circuitId);
+                }
+            }
+
+            float wattsUsed = 0f;
+            float wattsGenerated = 0f;
+            float wattsPotential = 0f;
+            float circuitJoulesAvailable = 0f;
+            foreach (ushort circuitId in circuitIds)
+            {
+                wattsUsed += circuitManager.GetWattsUsedByCircuit(circuitId);
+                wattsGenerated += circuitManager.GetWattsGeneratedByCircuit(circuitId);
+                wattsPotential += circuitManager.GetPotentialWattsGeneratedByCircuit(circuitId);
+                circuitJoulesAvailable += circuitManager.GetJoulesAvailableOnCircuit(circuitId);
+            }
+
+            var sb = new StringBuilder("{");
+            bool hasProperty = false;
+            AppendNumberProperty(sb, ref hasProperty, "battery_joules", batteryJoules);
+            AppendNumberProperty(sb, ref hasProperty, "battery_capacity_joules", batteryCapacityJoules);
+            AppendNumberProperty(sb, ref hasProperty, "circuit_joules_available", circuitJoulesAvailable);
+            AppendNumberProperty(sb, ref hasProperty, "watts_used", wattsUsed);
+            AppendNumberProperty(sb, ref hasProperty, "watts_generated", wattsGenerated);
+            AppendNumberProperty(sb, ref hasProperty, "watts_potential", wattsPotential);
+            AppendNumberProperty(sb, ref hasProperty, "circuits", circuitIds.Count);
+            sb.Append("}");
+            return sb.ToString();
         }
 
         private static void AppendPropertyPrefix(StringBuilder sb, ref bool hasProperty, string name)

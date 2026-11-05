@@ -195,3 +195,64 @@ Command shape: `{"type":"set_priority","x":12,"y":34,"priority":8}`.
 Results use `ok`, `nothing_found`, `invalid_priority`, or `out_of_bounds`.
 Unexpected exceptions are logged and reported as `nothing_found`, the closest
 failure reason available in the requested result set.
+
+## Achievement state API
+
+`SaveGame.Instance` and its `ColonyAchievementTracker` property are confirmed
+in `SaveGame.cs` (lines 146 and 185-194). `ColonyAchievementTracker.OnSpawn()`
+(`ColonyAchievementTracker.cs`, lines 216-227) creates status entries for
+`Db.Get().ColonyAchievements.resources`; the tracker's public
+`achievements` dictionary maps achievement IDs to `ColonyAchievementStatus`.
+`ColonyAchievementStatus.success` is the achieved flag, and
+`Requirements` exposes the achievement's requirement list
+(`ColonyAchievementStatus.cs`, lines 9-15).
+
+Each `ColonyAchievementRequirement` exposes `GetProgress(bool)` and
+`Success()` (`Database/ColonyAchievementRequirement.cs`, lines 7-14).
+`AchievementWidget.ShowRequirement()` (`AchievementWidget.cs`, lines 319-331)
+uses `GetProgress(flag)` for the displayed progress text. The snapshot reports
+each database achievement's ID and name, its `success` value as `achieved`,
+and the non-empty strings returned by each requirement's `GetProgress`.
+The resulting `achievements` array contains `{id, name, achieved, progress}`,
+where `progress` is an array of requirement strings.
+
+## Environment state API
+
+`Grid.Temperature`, `Grid.Mass`, and `Grid.Element` are public grid indexers
+(`Grid.cs`, lines 744-748 and the `TemperatureIndexer` definition at line
+492). `Element.id` and `Element.IsGas` distinguish gas species; the
+`SimHashes.Oxygen` and `SimHashes.CarbonDioxide` values are present in
+`SimHashes.cs` (lines 19 and 4). Existing code also verifies
+`Grid.XYToCell`, `Grid.IsValidCell`, `Grid.IsValidCellInWorld`, and
+`Grid.WorldIdx`.
+
+These APIs support a telepad-centered 11x11 snapshot: average temperature in
+Kelvin across valid active-world cells, plus oxygen and carbon-dioxide gas
+mass averaged per valid cell and reported in grams.
+The optional `environment` object contains `temperature_avg_k`, `oxygen_avg_g`,
+and `co2_avg_g`; it is omitted if there is no valid telepad-centered sample.
+
+## Power and water state APIs
+
+`Components.Generators` and `Components.Batteries` are public `Cmps<T>`
+collections (`Components.cs`, lines 381 and 385). `Battery.JoulesAvailable`,
+`Battery.Capacity`, and `Battery.PowerCell` are public (`Battery.cs`, lines
+60-70); `Generator.WattageRating`, `Generator.PowerCell`, and
+`Generator.IsProducingPower()` are confirmed in `Generator.cs` (lines 64, 80,
+and 122).
+
+`CircuitManager.GetCircuitID(int)`, `GetWattsUsedByCircuit(ushort)`,
+`GetWattsGeneratedByCircuit(ushort)`,
+`GetPotentialWattsGeneratedByCircuit(ushort)`, and
+`GetJoulesAvailableOnCircuit(ushort)` are public APIs in `CircuitManager.cs`
+(lines 117, 599, 684, 701, and 715). Battery and generator power cells are
+filtered to the active world before circuit totals are collected. Circuits
+without a battery or generator component in the active world are not included
+in these totals.
+The optional `power` object contains `battery_joules`,
+`battery_capacity_joules`, `circuit_joules_available`, `watts_used`,
+`watts_generated`, `watts_potential`, and `circuits`.
+
+Water is already reported in `resources.clean_water_kg` using the verified
+`WorldContainer.worldInventory`, `WorldInventory.GetAmount(GameTags.Water,
+false)` APIs described above; no duplicate water block is needed.
