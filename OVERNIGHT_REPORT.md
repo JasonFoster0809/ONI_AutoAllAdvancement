@@ -367,15 +367,17 @@ chiếu Assembly-CSharp-firstpass). Barracks trong code cần ít nhất một
 building có tag BedType (không phải Clinic), cấm IndustrialMachinery, và
 `cavity.NumCells` từ 12 đến 64 inclusive. Game tìm cavity bằng flood fill;
 solid/foundation cells và door cells là biên. Đã ghi source details, ví dụ
-JSON và chi phí O(R) mỗi lần cập nhật trong `README_API.md`.
+JSON và chi phí O(R + C) mỗi lần cập nhật trong `README_API.md` (R là số
+phòng, C là tổng số cavity cells phải duyệt).
 
 ### Giai đoạn 2 — State C#
 
 **XONG — `dotnet build` thành công, 0 warning, 0 error.** State thêm `rooms`
 với `{type, size, x, y}`; cache theo world ID khoảng 10 giây như
-`building_list`. `x,y` là ô đầu tiên hợp lệ trong cavity; lỗi refresh bỏ
-toàn bộ khối rooms, entry riêng lẻ không hợp lệ được log và bỏ qua. Mọi
-đọc chạy trong hook `Game.Update` trên main thread. Chưa chạy game.
+`building_list`. `x,y` được chọn theo y nhỏ nhất rồi x nhỏ nhất từ các cell
+thực của cavity; lỗi refresh bỏ toàn bộ khối rooms, entry riêng lẻ không
+hợp lệ được log và bỏ qua. Mọi đọc chạy trong hook `Game.Update` trên main
+thread. Chưa chạy game.
 
 Ví dụ state:
 
@@ -423,6 +425,53 @@ này. Thông tin Bed/industrial machinery/12-64/Morale/Stamina trong tooltip
 đầu đối chiếu với code. Thời điểm cấp Morale lúc dupe thức dậy được ghi là
 thông tin cộng đồng, cần kiểm chứng; điều kiện Mess Hall/Great Hall cũng
 được đánh dấu cần kiểm chứng.
+
+## Bổ sung: lọc và ổn định `rooms`
+
+### Xác minh API
+
+**XONG — `ilspycmd 8.2`.** Decompile `Room` xác nhận `Room.cavity` là
+`CavityInfo`; `CavityInfo.cells` là `List<int>` và `NumCells` là số cell.
+`RoomProber.RefreshModule.Visitor.VisitCell` thêm từng cell được flood-fill
+vào danh sách cavity. `Grid.CellToXY` đổi từng cell index thành tọa độ.
+Vì vậy kiểm tra membership dùng chính xác `cavity.cells`, không dùng bounding
+box `minX/maxX/minY/maxY` có thể bao gồm cell không thuộc cavity.
+`Database.RoomTypes.GetRoomType` trả `Neutral` nếu không có loại phòng nào
+thỏa mãn; vì thế phòng vượt giới hạn kích thước có thể có type Neutral.
+
+### Thay đổi C#
+
+**XONG — `dotnet build`: thành công, 0 warning, 0 error.** Tập cell công
+trình được tạo từ cùng entries đã serialize ra `building_list` (completed và
+under-construction, cùng prefab filters). Phòng không-Neutral luôn được giữ.
+Phòng Neutral chỉ được đưa vào state nếu một `cavity.cells` trùng chính xác
+với cell của một building-list entry. Do đó Neutral tự nhiên/rỗng được bỏ,
+còn phòng Neutral chứa công trình người chơi—including phòng vượt size
+constraint—được giữ lại. Schema vẫn giữ `{type, size, x, y}`.
+
+Đại diện cố định là cell hợp lệ có y nhỏ nhất, sau đó x nhỏ nhất; không phụ
+thuộc thứ tự `CavityInfo.cells`. Chi phí refresh mỗi ~10 giây là O(R + C):
+R phòng và C tổng số cavity cells cần duyệt cho membership/toạ độ; tra cứu
+building cell dùng `HashSet<int>`. Đây là ước lượng thao tác, chưa profile
+trên game. Dữ liệu save mẫu người dùng báo 951 phòng/345 KB là động lực lọc;
+không có save thật được đọc hoặc kiểm thử trong lần sửa này.
+
+### Kiểm thử/tài liệu
+
+**XONG — `python -m pytest -q`: 46 passed; `dotnet build`: thành công, 0
+warning, 0 error.** Schema không đổi, nên planner và fixture Python chỉ được
+cập nhật để dùng ví dụ đủ `{type, size, x, y}`; không cần đổi logic Python.
+`README_API.md` ghi cách membership, sort tọa độ, fallback Neutral và độ
+phức tạp. `playbook.md` ghi chú phòng vượt constraint có thể về Neutral và
+cần kiểm chứng điều này với các loại phòng khác.
+
+Không có phần nào bị bỏ qua. Code C# mới **CHƯA test thật trong game**;
+không copy DLL, không chạy deploy/game, không push.
+
+### Commit cho lần chỉnh sửa `rooms` (không push)
+
+- `77dc67b` — Filter and stabilize room state output (lọc cell và tọa độ)
+- `647ee6c` — Cover room state coordinates in planner fixture
 
 ### Tổng kết và commits
 

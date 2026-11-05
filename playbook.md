@@ -86,8 +86,15 @@ they depend on traits, building configuration, or game version.
   before selecting elements; it refuses to plan when inventory or required
   mass data is unavailable.
 - `rooms` reports the RoomProber type, cell count, and a representative
-  coordinate. The Barracks goal is considered complete only when this state
-  contains a room with `type: "Barracks"`.
+  coordinate. It always includes non-Neutral room types and includes a
+  Neutral room only when its cell list contains the cell of a building in
+  `building_list`. A room that exceeds a room type's size constraints can be
+  classified as Neutral by the game and is retained when it contains a listed
+  player building; it does not receive that room type's bonus. Barracks
+  constraints were verified in code; whether other room types similarly fall
+  back to Neutral when oversized is **cần kiểm chứng**. The Barracks goal is
+  considered complete only when this state contains a room with
+  `type: "Barracks"`.
 - `build_bedroom` remains a separate simple bed-and-door planner. It does not
   create an enclosed room; use the Barracks goal for the perimeter plan.
 
@@ -101,6 +108,8 @@ they depend on traits, building configuration, or game version.
 - Whether Barracks Morale is applied on waking and the exact behavior in the
   installed game version.
 - The Morale requirements and effects for Mess Hall and Great Hall.
+- Whether other room types also fall back to Neutral when they exceed their
+  size limits; Barracks is the only type whose constraints were checked here.
 - Construction validation of the generated Barracks, especially if the
   configured Door is taller than the Bed or a perimeter tile is already
   under construction.
