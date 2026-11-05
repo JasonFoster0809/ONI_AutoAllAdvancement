@@ -69,6 +69,30 @@ they depend on traits, building configuration, or game version.
   configuration, and duplicant traits; treat approximate values as estimates
   and mark uncertain details **cần kiểm chứng**.
 
+## Hành động khẩn cấp
+
+The following inventory is a read-only review of the local
+`oni_state.json`/`oni_catalog.json` at cycle 4. Unlocked status and counts can
+change with the colony; always use the current catalog and state before
+planning.
+
+| Case | State signals available | Unlocked catalog options | Missing/limits |
+|---|---|---|---|
+| Low oxygen | `environment.oxygen_avg_g`, `oxygen_air`, `resources.materials.Algae`, `building_list`, `world.map`/`origin`/`start`, and dupe positions. Current sample: 267.87 g average local oxygen, 769.2 kg Algae, two built `MineralDeoxidizer` entries. | `MineralDeoxidizer` (1x2; 200 kg `Metal`), `Electrolyzer` (2x2; 200 kg `Metal`). Current stock includes 18,663.9 kg `Cuprite`, an option for the Deoxidizer's Metal category. | Current state entries contain only the old building fields: no per-building `operational`, `powered`, or `stored`; therefore stored Algae/operating state for existing Deoxidizers is unknown. State has no explicit dupe-to-room ID/bounds. Nearest clear floor placement can be selected from the local map but same-room placement is **cần kiểm chứng**. `oxygen_air` and `environment.oxygen_avg_g` are local samples, not colony-wide supply. |
+| Hungry dupe/low food stock | `dupes[].calories_kcal`, `resources.food_kcal`, and `alerts`. Current sample: 19,358.32 kcal total food; four dupes at 1,710-3,897 kcal. `job_priorities` contains `Farming`, `Cook`, and `Ranching`. | Unlocked IDs include `FarmTile` (1x1; 100 kg Farmable), `HydroponicFarm` (1x1; 100 kg Metal), `FarmStation` (2x3; 400 kg Metal), `CookingStation` (3x2; 400 kg Metal), and `RanchStation` (2x3; 400 kg Metal). These establish build availability, not that a specific crop/recipe is ready. | State has aggregate kcal and dupe calories but no food-consumption trend, edible item breakdown, crop/recipe readiness, or reliable food-production rate. Existing rule detects dupe calories below 100 kcal or mod alert; no low-total-stock threshold exists yet. Chosen policy for a future action: one estimated cycle of food per dupe (1,000 kcal each) as the low-stock cutoff; it is a planning threshold, not an ONI danger threshold. |
+| High stress | `dupes[].stress`, names/positions, `alerts`, `job_priorities`, and built `building_list`. Current sample: four dupes, stress 0, with `Dig`/`Build` priorities present. | `Bed` (2x2; 200 kg BuildableRaw&BuildingWood), `Outhouse` (2x3; same category, 200 kg), and `WashBasin` (2x3; 50 kg BuildableRaw&Metal) are unlocked. Current stock has 32,563.3 kg SandStone, which is an option for those categories. | Current counts: seven Beds, three Outhouses, one WashBasin. State does not say which dupe is assigned to/served by each amenity or encode an amenity capacity/usage policy. Safe planner assumption: target at least one of each per live dupe, count built plus under-construction entries, and build only the shortage. Exact bathroom scheduling/room rules remain **cần kiểm chứng**. |
+| Temperature outside policy band | `environment.temperature_avg_k`; current sample is 296.24 K. Existing Python rule uses 273.15-318.15 K as policy limits. | Catalog includes unlocked `IceCooledFan`, `IceMachine`, and `SpaceHeater`, among other thermal-related entries. No build action is selected for temperature emergencies. | Temperature is an 11x11 telepad-area average, not a per-dupe reading or map; spatial extremes and safe limits are unavailable. Thresholds are agent policy only. The response remains warning-only. |
+
+Decision: use only exact building IDs/unlock flags/material options from the
+live catalog, build only after material selection succeeds, and never infer
+that a missing per-building `stored` field means an empty store. If an
+existing Deoxidizer's stored Algae is unknown, emit a missing-data warning
+and do not build a duplicate or claim `thiếu_algae`. Limit emergency commands
+per selection and use cycle-based cooldowns; the pending/cooldown choices
+are agent safeguards, not game mechanics. No new C# state fields are required
+for detecting the four emergencies, but existing-Deoxidizer algae warnings
+must remain conservative until its per-building storage field is present.
+
 ## Reading the mod snapshot and agent heuristics
 
 - `environment.temperature_avg_k`, `oxygen_avg_g`, and `co2_avg_g` are
