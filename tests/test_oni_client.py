@@ -18,6 +18,22 @@ def test_read_state_warns_when_stale(tmp_path):
     assert any("stale" in str(item.message) for item in caught)
 
 
+def test_read_state_reports_missing_malformed_and_non_object_json(tmp_path):
+    import pytest
+
+    with pytest.raises(FileNotFoundError):
+        oni_client.read_state(tmp_path)
+
+    state_path = tmp_path / "oni_state.json"
+    state_path.write_text("{", encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        oni_client.read_state(tmp_path)
+
+    state_path.write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="must contain a JSON object"):
+        oni_client.read_state(tmp_path)
+
+
 def test_read_state_accepts_operational_building_and_legacy_fixtures(tmp_path):
     cases = (
         ("operational_mineral_deoxidizer.json", True, True),
@@ -71,6 +87,27 @@ def test_send_command_validates_actions(tmp_path):
 
     with pytest.raises(ValueError, match="non-empty"):
         oni_client.send_command([], tmp_path)
+
+
+def test_send_command_rejects_matching_result_without_results_array(
+    tmp_path, monkeypatch
+):
+    import pytest
+
+    result_path = tmp_path / "oni_results.json"
+
+    def publish_invalid_result(_seconds):
+        command = json.loads((tmp_path / "oni_commands.json").read_text(encoding="utf-8"))
+        result_path.write_text(json.dumps({"id": command["id"]}), encoding="utf-8")
+
+    monkeypatch.setattr(oni_client.time, "sleep", publish_invalid_result)
+    with pytest.raises(ValueError, match="no results array"):
+        oni_client.send_command(
+            [{"type": "dig", "x": 1, "y": 2}],
+            tmp_path,
+            timeout=1,
+            poll_interval=0.001,
+        )
 
 
 def test_send_command_retries_locked_and_partial_result_without_resending(

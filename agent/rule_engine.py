@@ -244,6 +244,13 @@ def _evaluate(
             not isinstance(building, Mapping) for building in buildings
         ):
             return UNKNOWN
+        if any("id" not in building for building in buildings):
+            return UNKNOWN
+        if "state" in condition and any(
+            building.get("id") == condition["building"] and "state" not in building
+            for building in buildings
+        ):
+            return UNKNOWN
         count = sum(
             building.get("id") == condition["building"]
             and ("state" not in condition or building.get("state") == condition["state"])
@@ -254,6 +261,13 @@ def _evaluate(
         buildings = state.get("building_list")
         if not isinstance(buildings, list) or any(
             not isinstance(building, Mapping) for building in buildings
+        ):
+            return UNKNOWN
+        if any("id" not in building for building in buildings):
+            return UNKNOWN
+        if "state" in condition and any(
+            building.get("id") == condition["building"] and "state" not in building
+            for building in buildings
         ):
             return UNKNOWN
         matches = [

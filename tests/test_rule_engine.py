@@ -243,6 +243,49 @@ def test_missing_or_invalid_comparison_data_is_unknown():
         assert result["reasons"][0]["status"] == "unknown"
 
 
+def test_malformed_nested_and_missing_item_fields_remain_unknown():
+    nested = document_with(
+        {"op": "lt", "path": "environment.oxygen_avg_g", "value": 50}
+    )
+    for state in (
+        {"environment": None},
+        {"environment": {"oxygen_avg_g": None}},
+        {"environment": {"oxygen_avg_g": float("nan")}},
+    ):
+        result = explain_rules(state, document=nested)
+        assert result["selected"] is None
+        assert result["reasons"][0]["status"] == "unknown"
+
+    count = document_with(
+        {
+            "op": "count",
+            "building": "Outhouse",
+            "state": "built",
+            "comparison": "lt",
+            "value": 1,
+        }
+    )
+    for state in (
+        {},
+        {"building_list": None},
+        {"building_list": [{"id": "Outhouse"}]},
+    ):
+        result = explain_rules(state, document=count)
+        assert result["selected"] is None
+        assert result["reasons"][0]["status"] == "unknown"
+
+
+def test_load_rules_reports_missing_and_malformed_files(tmp_path):
+    missing = tmp_path / "missing-rules.yaml"
+    with pytest.raises(FileNotFoundError):
+        load_rules(missing)
+
+    malformed = tmp_path / "bad-rules.yaml"
+    malformed.write_text("{", encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        load_rules(malformed)
+
+
 def test_building_count_filters_by_id_and_state():
     condition = {
         "op": "count",

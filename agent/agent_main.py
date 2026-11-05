@@ -15,6 +15,7 @@ from typing import Any
 
 from .catalog import CatalogError, load_catalog
 from . import planner as planner_module
+from .diagnostics import state_metrics
 from .llm_chooser import choose_action
 from .gemini_manager import plan_goals
 from .metrics import calculate_metrics, write_metrics
@@ -120,94 +121,17 @@ def load_agent_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
 def _state_summary(state: Mapping[str, Any]) -> dict[str, Any]:
     dupes = state.get("dupes")
     resources = state.get("resources")
-    oxygen = oxygen_value(state)
-    stress_values = [
-        dupe.get("stress")
-        for dupe in dupes
-        if isinstance(dupe, Mapping)
-        and isinstance(dupe.get("stress"), (int, float))
-        and not isinstance(dupe.get("stress"), bool)
-        and math.isfinite(dupe["stress"])
-    ] if isinstance(dupes, list) else []
-    algae_values: list[float] = []
-    algae_known = False
-    buildings = state.get("building_list")
-    if isinstance(buildings, list):
-        machines = [
-            item for item in buildings
-            if isinstance(item, Mapping)
-            and item.get("id") == "MineralDeoxidizer"
-            and item.get("state") == "built"
-        ]
-        if machines and all("stored" in machine for machine in machines):
-            algae_known = True
-            for machine in machines:
-                stored = machine["stored"]
-                if isinstance(stored, Mapping):
-                    amount = stored.get("Algae", 0)
-                    if isinstance(amount, (int, float)) and not isinstance(amount, bool) and math.isfinite(amount) and amount >= 0:
-                        algae_values.append(float(amount))
-                    else:
-                        algae_known = False
-                        break
-                elif isinstance(stored, list):
-                    for item in stored:
-                        if isinstance(item, Mapping) and item.get("element") == "Algae":
-                            amount = item.get("kg")
-                            if isinstance(amount, (int, float)) and not isinstance(amount, bool) and math.isfinite(amount) and amount >= 0:
-                                algae_values.append(float(amount))
-                            else:
-                                algae_known = False
-                                break
-                    if not algae_known:
-                        break
-                else:
-                    algae_known = False
-                    break
-
-    research = state.get("research")
-    active = research.get("active") if isinstance(research, Mapping) else None
-    research_progress = None
-    techs = research.get("techs") if isinstance(research, Mapping) else None
-    if isinstance(active, str) and isinstance(techs, list):
-        active_tech = next(
-            (
-                tech for tech in techs
-                if isinstance(tech, Mapping) and tech.get("id") == active
-            ),
-            None,
-        )
-        costs = active_tech.get("cost") if isinstance(active_tech, Mapping) else None
-        if isinstance(costs, list) and costs:
-            required = 0.0
-            current = 0.0
-            for item in costs:
-                if not isinstance(item, Mapping):
-                    break
-                needed, amount = item.get("required"), item.get("current")
-                if not all(
-                    isinstance(value, (int, float))
-                    and not isinstance(value, bool)
-                    and math.isfinite(value)
-                    and value >= 0
-                    for value in (needed, amount)
-                ):
-                    break
-                required += needed
-                current += amount
-            else:
-                if required > 0:
-                    research_progress = current / required
+    metrics = state_metrics(state)
     return {
-        "cycle": state.get("cycle"),
+        "cycle": metrics["cycle"],
         "dupe_count": len(dupes) if isinstance(dupes, list) else None,
-        "oxygen_air": oxygen,
-        "oxygen_g": oxygen,
+        "oxygen_air": metrics["oxygen_g"],
+        "oxygen_g": metrics["oxygen_g"],
         "food_kcal": resources.get("food_kcal") if isinstance(resources, Mapping) else None,
-        "max_stress": max(stress_values) if stress_values else None,
-        "algae_kg": sum(algae_values) if algae_known else None,
-        "research_active": active if isinstance(active, str) else None,
-        "research_progress": research_progress,
+        "max_stress": metrics["max_stress"],
+        "algae_kg": metrics["algae_kg"],
+        "research_active": metrics["research_active"],
+        "research_progress": metrics["research_progress"],
     }
 
 
