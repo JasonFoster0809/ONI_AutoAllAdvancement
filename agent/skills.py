@@ -101,6 +101,16 @@ def build_bedroom(
     ]
 
 
+def build_barracks(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+    bed_id: str,
+    door_id: str,
+) -> list[dict[str, Any]]:
+    """Plan a bed and door using the existing supported bedroom layout."""
+    return build_bedroom(state, catalog, bed_id, door_id)
+
+
 def build_research_area(
     state: Mapping[str, Any],
     catalog: Sequence[Mapping[str, Any]],
@@ -185,4 +195,3 @@ def build_ladder_shaft(
         )
         for offset in range(height)
     ]
-
