@@ -92,9 +92,7 @@ def send_command(
             try:
                 with result_path.open("r", encoding="utf-8") as result_file:
                     result = json.load(result_file)
-            except FileNotFoundError:
-                result = None
-            except json.JSONDecodeError:
+            except (FileNotFoundError, PermissionError, json.JSONDecodeError):
                 result = None
 
             if isinstance(result, dict) and result.get("id") == command_id:
@@ -111,4 +109,3 @@ def send_command(
             temporary_path.unlink()
         except FileNotFoundError:
             pass
-
