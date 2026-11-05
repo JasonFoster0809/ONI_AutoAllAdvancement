@@ -294,3 +294,29 @@ Valid example using the game's default group counts:
 ```json
 {"id":"schedule-001","actions":[{"type":"schedule","schedule":"Default","blocks":["Hygene","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Worktime","Recreation","Recreation","Sleep","Sleep","Sleep"]}]}
 ```
+
+## Dupe job-priority API
+
+`ChoreConsumer` is attached to minion prefabs by `BaseMinionConfig` (`line
+90`). It exposes `GetPersonalPriority(ChoreGroup)` and
+`SetPersonalPriority(ChoreGroup, int)` (`ChoreConsumer.cs`, lines 537-560).
+The implementation clamps values to the verified constants
+`MIN_PERSONAL_PRIORITY = 0` and `MAX_PERSONAL_PRIORITY = 5` (lines 51-53);
+the action validates this range before calling the setter.
+
+`Database.ChoreGroups.resources` contains the real group resources;
+`ChoreGroup.Id`, `choreTypes`, and `userPrioritizable` are defined in
+`ChoreGroup.cs`. The Jobs screen obtains each duplicant's
+`ChoreConsumer` and invokes `SetPersonalPriority` for its selected
+`ChoreGroup` (`JobsTableScreen.cs`, lines 305-306 and 450). State exposes
+`dupes[].job_priorities` as an object keyed by chore-group ID for
+user-prioritizable groups with chore types.
+
+Action example:
+
+```json
+{"id":"dupe-priority-001","actions":[{"type":"set_dupe_priority","dupe":"Ada","group":"Dig","priority":4}]}
+```
+
+Supported results are `ok`, `unknown_dupe`, `unknown_group`,
+`invalid_priority`, `unavailable`, or `error`.

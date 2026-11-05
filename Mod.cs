@@ -410,6 +410,21 @@ namespace OniAgent
                         Debug.LogWarning("[OniAgent] Could not read dupe position: " + e);
                     }
 
+                    try
+                    {
+                        var choreConsumer = dupe.GetComponent<ChoreConsumer>();
+                        if (choreConsumer != null)
+                        {
+                            string prioritiesJson = BuildDupeJobPrioritiesJson(choreConsumer);
+                            AppendPropertyPrefix(sb, ref hasDupeProperty, "job_priorities");
+                            sb.Append(prioritiesJson);
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning("[OniAgent] Could not read dupe job priorities: " + e);
+                    }
+
                     sb.Append("}");
                 }
             }
@@ -735,6 +750,11 @@ namespace OniAgent
                 return ExecuteScheduleAction(action, result);
             }
 
+            if (action.Type == "set_dupe_priority")
+            {
+                return ExecuteSetDupePriorityAction(action, result);
+            }
+
             if (action.Type != "dig")
             {
                 result.Reason = "unsupported";
@@ -1056,6 +1076,98 @@ namespace OniAgent
             catch (Exception e)
             {
                 Debug.LogWarning("[OniAgent] Could not execute schedule action: " + e);
+                result.Reason = "error";
+                return result;
+            }
+        }
+
+        private static AgentActionResult ExecuteSetDupePriorityAction(AgentAction action, AgentActionResult result)
+        {
+            try
+            {
+                if (action.InvalidPriority || !action.Priority.HasValue ||
+                    action.Priority.Value < ChoreConsumer.MIN_PERSONAL_PRIORITY ||
+                    action.Priority.Value > ChoreConsumer.MAX_PERSONAL_PRIORITY)
+                {
+                    result.Reason = "invalid_priority";
+                    return result;
+                }
+
+                if (action.InvalidDupeName || string.IsNullOrEmpty(action.DupeName))
+                {
+                    result.Reason = "unknown_dupe";
+                    return result;
+                }
+
+                if (action.InvalidChoreGroup || string.IsNullOrEmpty(action.ChoreGroupId))
+                {
+                    result.Reason = "unknown_group";
+                    return result;
+                }
+
+                var database = Db.Get();
+                if (database == null || database.ChoreGroups == null)
+                {
+                    result.Reason = "unavailable";
+                    return result;
+                }
+
+                MinionIdentity targetDupe = null;
+                var dupes = Components.LiveMinionIdentities.Items;
+                for (int i = 0; i < dupes.Count; i++)
+                {
+                    if (!string.Equals(dupes[i].name, action.DupeName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (targetDupe != null)
+                    {
+                        result.Reason = "unknown_dupe";
+                        return result;
+                    }
+                    targetDupe = dupes[i];
+                }
+
+                if (targetDupe == null)
+                {
+                    result.Reason = "unknown_dupe";
+                    return result;
+                }
+
+                ChoreGroup targetGroup = null;
+                var groups = database.ChoreGroups.resources;
+                for (int i = 0; i < groups.Count; i++)
+                {
+                    if (string.Equals(groups[i].Id, action.ChoreGroupId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        targetGroup = groups[i];
+                        break;
+                    }
+                }
+
+                if (targetGroup == null || !targetGroup.userPrioritizable ||
+                    targetGroup.choreTypes == null || targetGroup.choreTypes.Count == 0)
+                {
+                    result.Reason = "unknown_group";
+                    return result;
+                }
+
+                var consumer = targetDupe.GetComponent<ChoreConsumer>();
+                if (consumer == null)
+                {
+                    result.Reason = "unavailable";
+                    return result;
+                }
+
+                consumer.SetPersonalPriority(targetGroup, action.Priority.Value);
+                result.Ok = true;
+                result.Reason = "ok";
+                return result;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not execute set_dupe_priority action: " + e);
                 result.Reason = "error";
                 return result;
             }
@@ -2318,6 +2430,31 @@ namespace OniAgent
             return sb.ToString();
         }
 
+        private static string BuildDupeJobPrioritiesJson(ChoreConsumer consumer)
+        {
+            var database = Db.Get();
+            if (database == null || database.ChoreGroups == null)
+            {
+                throw new InvalidOperationException("Chore group database is unavailable.");
+            }
+
+            var sb = new StringBuilder("{");
+            bool hasPriority = false;
+            var groups = database.ChoreGroups.resources;
+            for (int i = 0; i < groups.Count; i++)
+            {
+                var group = groups[i];
+                if (!group.userPrioritizable || group.choreTypes == null || group.choreTypes.Count == 0)
+                {
+                    continue;
+                }
+
+                AppendNumberProperty(sb, ref hasPriority, group.Id, consumer.GetPersonalPriority(group));
+            }
+            sb.Append("}");
+            return sb.ToString();
+        }
+
         private static void AppendPropertyPrefix(StringBuilder sb, ref bool hasProperty, string name)
         {
             if (hasProperty)
@@ -2405,6 +2542,8 @@ namespace OniAgent
         public string BuildingId;
         public string ResearchTechId;
         public string ScheduleName;
+        public string DupeName;
+        public string ChoreGroupId;
         public int? X;
         public int? Y;
         public string Orientation;
@@ -2413,6 +2552,9 @@ namespace OniAgent
         public int? Priority;
         public bool InvalidScheduleName;
         public bool InvalidScheduleBlocks;
+        public bool InvalidDupeName;
+        public bool InvalidChoreGroup;
+        public bool InvalidPriority;
     }
 
     internal sealed class AgentCommandResult
@@ -2510,7 +2652,21 @@ namespace OniAgent
                 }
                 if (actionObject.TryGetValue("priority", out var priorityValue))
                 {
-                    action.Priority = ReadInteger(priorityValue, "priority");
+                    if (action.Type == "set_dupe_priority")
+                    {
+                        try
+                        {
+                            action.Priority = ReadInteger(priorityValue, "priority");
+                        }
+                        catch (FormatException)
+                        {
+                            action.InvalidPriority = true;
+                        }
+                    }
+                    else
+                    {
+                        action.Priority = ReadInteger(priorityValue, "priority");
+                    }
                 }
                 if (actionObject.TryGetValue("schedule", out var scheduleValue))
                 {
@@ -2543,6 +2699,28 @@ namespace OniAgent
                             }
                             action.ScheduleBlocks.Add(scheduleBlock);
                         }
+                    }
+                }
+                if (actionObject.TryGetValue("dupe", out var dupeNameValue))
+                {
+                    if (dupeNameValue is string dupeName)
+                    {
+                        action.DupeName = dupeName;
+                    }
+                    else
+                    {
+                        action.InvalidDupeName = true;
+                    }
+                }
+                if (actionObject.TryGetValue("group", out var choreGroupValue))
+                {
+                    if (choreGroupValue is string choreGroupId)
+                    {
+                        action.ChoreGroupId = choreGroupId;
+                    }
+                    else
+                    {
+                        action.InvalidChoreGroup = true;
                     }
                 }
                 actions.Add(action);
