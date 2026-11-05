@@ -168,3 +168,38 @@ Các phần không được thêm do thiếu API/state đã xác minh hoặc vì
 offline bằng fixture/mocks; chưa xác thực trao đổi file với game thật hoặc
 Ollama thật. Không copy DLL vào thư mục game, không chạy deploy và không
 khởi động ONI.
+
+## Bổ sung: kho vật liệu cho chọn vật liệu xây
+
+### Phần 1 — C# state `resources.materials`
+
+**XONG — `dotnet build` thành công.** Thêm cache vật liệu theo active world,
+làm mới khoảng 10 giây; mỗi lần refresh duyệt `ElementLoader.elements`, gọi
+`WorldInventory.GetAmount(element.tag, false)`, bỏ lượng không dương và làm
+tròn tới 1 chữ số thập phân. Khi refresh lỗi, chỉ bỏ `resources.materials`;
+các trường resource khác vẫn được giữ. Không thay đổi action game nào.
+
+Ví dụ cấu trúc state:
+
+```json
+{
+  "resources": {
+    "materials": {
+      "SandStone": 1234.5,
+      "Dirt": 250.0
+    }
+  }
+}
+```
+
+Trong lần build đầu có lỗi `CS1503` vì helper JSON nhận `float` nhưng giá trị
+làm tròn ban đầu là `double`; đã đổi sang `float` sau khi làm tròn. Build kế
+tiếp thành công với 0 warning, 0 error.
+
+### Phần 2 — Python `catalog.choose_materials`
+
+**CHƯA THỰC HIỆN tại thời điểm commit Phần 1.** Sẽ chọn option có lượng tồn kho
+dương, không phân biệt hoa thường để so khớp, và trả đúng casing từ state.
+Schema `oni_catalog.json` không có số kg cần thiết cho từng building/category;
+không tự đặt ngưỡng kg chưa có dữ liệu. Fixture và pytest sẽ được bổ sung ở
+commit Phần 2.

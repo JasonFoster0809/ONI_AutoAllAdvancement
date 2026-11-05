@@ -30,8 +30,11 @@ namespace OniAgent
         static float nextBuildingListUpdate = 0f;
         static float nextResearchUpdate = 0f;
         static float nextScheduleUpdate = 0f;
+        static float nextMaterialsUpdate = 0f;
         static int cachedBuildingWorldId = int.MinValue;
+        static int cachedMaterialsWorldId = int.MinValue;
         static string cachedBuildingListJson = "[]";
+        static string cachedMaterialsJson;
         static string cachedResearchJson;
         static string cachedScheduleJson;
         static string lastProcessedCommandId = string.Empty;
@@ -122,6 +125,20 @@ namespace OniAgent
             catch (Exception e)
             {
                 Debug.LogWarning("[OniAgent] Could not read clean water: " + e);
+            }
+
+            try
+            {
+                UpdateMaterialsCache();
+                if (cachedMaterialsJson != null)
+                {
+                    AppendPropertyPrefix(sb, ref hasResourceProperty, "materials");
+                    sb.Append(cachedMaterialsJson);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not append material inventory: " + e);
             }
             sb.Append("}");
 
@@ -1613,6 +1630,76 @@ namespace OniAgent
             {
                 Debug.LogWarning("[OniAgent] Could not refresh research state: " + e);
                 cachedResearchJson = null;
+            }
+        }
+
+        private static void UpdateMaterialsCache()
+        {
+            var activeWorld = ClusterManager.Instance.activeWorld;
+            if (activeWorld == null)
+            {
+                cachedMaterialsJson = null;
+                cachedMaterialsWorldId = int.MinValue;
+                return;
+            }
+
+            if (activeWorld.id == cachedMaterialsWorldId &&
+                Time.unscaledTime < nextMaterialsUpdate)
+            {
+                return;
+            }
+
+            nextMaterialsUpdate = Time.unscaledTime + 10f;
+            try
+            {
+                var inventory = activeWorld.worldInventory;
+                var elements = ElementLoader.elements;
+                if (inventory == null || elements == null)
+                {
+                    throw new InvalidOperationException("Active-world inventory or element list is unavailable.");
+                }
+
+                var materials = new StringBuilder("{");
+                bool hasMaterial = false;
+                var writtenTags = new HashSet<string>(StringComparer.Ordinal);
+                for (int i = 0; i < elements.Count; i++)
+                {
+                    var element = elements[i];
+                    if (element == null || element.tag == null)
+                    {
+                        continue;
+                    }
+
+                    string tagName = element.tag.Name;
+                    if (string.IsNullOrEmpty(tagName) || !writtenTags.Add(tagName))
+                    {
+                        continue;
+                    }
+
+                    float amount = inventory.GetAmount(element.tag, false);
+                    if (float.IsNaN(amount) || float.IsInfinity(amount) || amount <= 0f)
+                    {
+                        continue;
+                    }
+
+                    float roundedAmount = (float)Math.Round((double)amount, 1, MidpointRounding.AwayFromZero);
+                    if (roundedAmount <= 0f)
+                    {
+                        continue;
+                    }
+
+                    AppendNumberProperty(materials, ref hasMaterial, tagName, roundedAmount);
+                }
+                materials.Append("}");
+
+                cachedMaterialsJson = materials.ToString();
+                cachedMaterialsWorldId = activeWorld.id;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not refresh material inventory: " + e);
+                cachedMaterialsJson = null;
+                cachedMaterialsWorldId = activeWorld.id;
             }
         }
 

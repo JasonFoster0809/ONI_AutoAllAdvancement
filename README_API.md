@@ -335,12 +335,79 @@ three-cell widths use the middle cell and two-cell widths use the left cell;
 the y coordinate is the bottom row. `catalog.py` uses only prefab IDs and
 material options from `oni_catalog.json`.
 
-The current state does not contain `resources.materials`. Therefore,
-`catalog.choose_materials` returns `material_inventory_unavailable` for a
-building that requires material categories unless a caller supplies that
-field. Skill planners return action lists without sending them. The bedroom
-planner places a bed and door in a clear supported footprint; it does not
-build or verify room walls.
+The state includes `resources.materials`, refreshed on the same approximately
+10-second cadence as the building-list cache. `catalog.choose_materials`
+uses the positive amounts in this object together with each catalog material
+category's options. Skill planners return action lists without sending them.
+The bedroom planner places a bed and door in a clear supported footprint; it
+does not build or verify room walls.
+
+## Material inventory API
+
+Verified against the installed
+`D:\Oxygen Not Included\OxygenNotIncluded_Data\Managed\Assembly-CSharp.dll`
+by decompiling `WorldInventory`, `ElementLoader`, and `Element` with
+`ilspycmd 8.2`:
+
+- `ClusterManager.Instance.activeWorld.worldInventory` returns the inventory
+  for the active world; these members are also used by the existing resource
+  fields in `Mod.cs`.
+- `WorldInventory.GetAmount(Tag tag, bool includeRelatedWorlds)` returns a
+  `float`. In the decompiled implementation, `false` uses this inventory's
+  `GetTotalAmount(tag, false)` and subtracts
+  `MaterialNeeds.GetAmount(tag, worldId, false)`, then clamps the result at
+  zero. This is the available amount rather than the gross amount already
+  committed to construction. `true` instead delegates to
+  `ClusterUtil.GetAmountFromRelatedWorlds`; do not use it for an active-world
+  only snapshot.
+- `ElementLoader.elements` is a public `List<Element>` populated by
+  `ElementLoader.Load(...)`. `ElementLoader.elementTagTable` is a public
+  `Dictionary<Tag, Element>` populated from each loaded element's tag.
+- `Element.tag` is a public `Tag` field on `Element`; `Tag.Name` is the tag's
+  string name. Thus, for each loaded element, `element.tag` is the tag passed
+  to `WorldInventory.GetAmount`, and `element.tag.Name` is the JSON key.
+  Examples such as `SandStone`, `Cuprite`, `Dirt`, and `Algae` should be
+  emitted only when those names occur in the loaded elements; do not form
+  tags from unverified input strings.
+- `WorldInventory.GetAccessibleAmounts()` returns a public
+  `Dictionary<Tag, float>`, but its values are the cached accessible totals
+  maintained by `WorldInventory.Update`. `GetTotalAmount` reads this cache;
+  unlike `GetAmount`, the raw accessible total does not subtract
+  `MaterialNeeds`. It is therefore not interchangeable with the
+  reservation-aware amount when choosing construction materials.
+
+State shape:
+
+```json
+{
+  "resources": {
+    "materials": {
+      "SandStone": 1234.5,
+      "Cuprite": 0.0,
+      "Dirt": 250.0,
+      "Algae": 50.0
+    }
+  }
+}
+```
+
+Use each element's verified `tag.Name` as the key and its
+`activeWorld.worldInventory.GetAmount(element.tag, false)` as the value.
+Only positive amounts are included, rounded to one decimal place; elements
+whose rounded value is zero are omitted. The example names and amounts are
+illustrative, not claims about a live colony.
+
+For a complete snapshot, the direct `ElementLoader.elements` approach makes
+one `GetAmount` query per loaded element tag per state emission:
+`ElementLoader.elements.Count` queries and O(N) tag iteration, where N is
+the runtime-loaded element count. The DLL does not establish a fixed count:
+the list is populated from loaded element definitions, so DLC/mod content
+can affect it. No performance measurement was made. The mod caches the
+serialized material object per active world and refreshes it approximately
+every 10 seconds, rather than iterating the element list on every
+approximately 2-second state write. If a refresh fails, the
+`resources.materials` property is omitted until a later refresh succeeds;
+other resource properties remain available.
 
 `rules.py` uses conservative automation heuristics, not game danger
 thresholds: oxygen below 50 g per sampled cell, less than 100 kcal on a dupe,
