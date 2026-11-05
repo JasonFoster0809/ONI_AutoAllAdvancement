@@ -94,7 +94,9 @@ action from that file is processed and `oni_results.json` is not refreshed.
 
 For `build`, `x` and `y` identify the building's placement pivot cell, not a
 generic bounding-box corner. For a three-cell-wide `MedicalCot` placed with
-`"Neutral"` orientation, `x` is the middle cell and `y` is the bottom row.
+`"Neutral"` orientation, `x` is the middle cell; for a two-cell-wide building,
+`x` is the left cell. `y` is the bottom row. Pivot positions for orientations
+other than `"Neutral"` have not been tested.
 Example:
 
 ```json
