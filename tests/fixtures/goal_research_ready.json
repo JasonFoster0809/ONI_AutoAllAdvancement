@@ -1,0 +1,17 @@
+{
+  "cycle": 20,
+  "resources": {"food_kcal": 300000, "materials": {}},
+  "dupes": [],
+  "oxygen_air": 900,
+  "environment": {"temperature_avg_k": 295, "oxygen_avg_g": 850},
+  "alerts": [],
+  "research": {
+    "target": null,
+    "active": null,
+    "techs": [
+      {"id": "FarmingTech", "complete": false, "ready": true},
+      {"id": "AdvancedTech", "complete": false, "ready": true},
+      {"id": "DoneTech", "complete": true, "ready": true}
+    ]
+  }
+}

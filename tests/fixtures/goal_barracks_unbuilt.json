@@ -1,0 +1,24 @@
+{
+  "cycle": 20,
+  "resources": {"food_kcal": 300000, "materials": {}},
+  "dupes": [],
+  "oxygen_air": 900,
+  "environment": {"temperature_avg_k": 295, "oxygen_avg_g": 850},
+  "alerts": [],
+  "rooms": [],
+  "building_list": [],
+  "world": {
+    "start": {"x": 0, "y": 0},
+    "origin": {"x": -4, "y": -4},
+    "map": [
+      "........",
+      "........",
+      "........",
+      "........",
+      "........",
+      "........",
+      "........",
+      "........"
+    ]
+  }
+}
