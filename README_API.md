@@ -604,3 +604,76 @@ logged and skipped. The implementation uses `Game.Instance.roomProber.rooms`,
 `Grid.CellToXY`. It derives the building-cell membership index from the same
 completed/construction entries used to serialize `building_list`; the JSON
 shape remains `type`, `size`, `x`, and `y`.
+
+## Operational status API
+
+Verified against the installed
+`D:\Oxygen Not Included\OxygenNotIncluded_Data\Managed\Assembly-CSharp.dll`
+using `ilspycmd 8.2` decompilation of `Operational`, `EnergyConsumer`,
+`IEnergyConsumer`, `Storage`, `PrimaryElement`, `ElementConverter`,
+`Building`, `BuildingComplete`, and `MineralDeoxidizerConfig`:
+
+- Built entries originate from `Components.BuildingCompletes.Items`; the
+  existing filter requires `BuildingComplete.creationTime >= 0`. Therefore
+  operational telemetry is only applicable to entries with `state: "built"`.
+- `Operational.IsOperational` is the aggregate requirements state. Its
+  `Flags` dictionary maps `Operational.Flag` objects (`Name` and `FlagType`)
+  to booleans. `UpdateOperational()` makes `IsOperational` false if any
+  recorded flag is false. `Operational.IsActive` is a distinct state for
+  actually active work; it is not a synonym for available/operational and
+  should not be used for the `operational` snapshot field. An absent
+  `Operational` component leaves the field unknown and should omit it.
+- Power is identifiable by the building definition's
+  `RequiresPowerInput`; `IEnergyConsumer.IsPowered` is available on the
+  building component. `EnergyConsumer.IsPowered` returns the operational
+  `PoweredFlag`. A building without a power-input requirement should omit
+  `powered`; when the relevant consumer component is absent or unreadable,
+  omit only that field.
+- `Storage.GetAmountAvailable(Tag)` returns the sum of matching stored
+  `PrimaryElement.Units`; the overload accepting forbidden tags does the same
+  for non-forbidden items. `PrimaryElement.Mass` is `Units * MassPerUnit`.
+  For kg-valued stored material telemetry, sum `PrimaryElement.Mass` over
+  matching `Storage.items`, or use `GetAmountAvailable` only when the
+  material's units are verified to equal kg. In particular,
+  `MineralDeoxidizerConfig` sets the storage capacity in kg and requests
+  Algae; per-item `MassPerUnit` is not established by this config alone, so
+  directly labeling `GetAmountAvailable(new Tag("Algae"))` as kg is
+  **CHƯA XÁC MINH**. Any stored-mass field must be omitted if the kg
+  conversion cannot be verified.
+
+The following `MineralDeoxidizerConfig` lines are verbatim from the
+decompiled game code:
+
+```csharp
+private const float ALGAE_BURN_RATE = 0.55f;
+private const float ALGAE_STORAGE = 330f;
+private const float OXYGEN_GENERATION_RATE = 0.5f;
+
+obj.RequiresPowerInput = true;
+obj.EnergyConsumptionWhenActive = 120f;
+obj.ExhaustKilowattsWhenActive = 0.5f;
+obj.SelfHeatKilowattsWhenActive = 1f;
+
+storage.capacityKg = 330f;
+elementConverter.consumedElements = new ElementConverter.ConsumedElement[1]
+{
+    new ElementConverter.ConsumedElement(new Tag("Algae"), 0.55f)
+};
+elementConverter.outputElements = new ElementConverter.OutputElement[1]
+{
+    new ElementConverter.OutputElement(0.5f, SimHashes.Oxygen, 303.15f,
+        useEntityTemperature: false, storeOutput: false, emissionOffset.x, emissionOffset.y)
+};
+manualDeliveryKG.RequestedItemTag = new Tag("Algae");
+manualDeliveryKG.capacity = 330f;
+manualDeliveryKG.refillMass = 132f;
+```
+
+`ElementConverter.ConsumedElement` and `OutputElement` constructors name their
+rate parameter `kgPerSecond`; the configured rates are therefore 0.55 kg/s
+Algae consumption and 0.5 kg/s Oxygen generation while operating. The
+decompiled building definition requires power and specifies 120 W active
+consumption. This verifies the configured operating recipe, not actual
+throughput in a live colony. Other runtime constraints such as control
+settings or game-state effects should be treated as **cần kiểm chứng** unless
+separately confirmed from the installed game code.
