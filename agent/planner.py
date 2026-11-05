@@ -75,29 +75,18 @@ def _plan_research_target(
     return [{"type": "set_research", "tech": tech_id}]
 
 
-def _barracks_done(state: Mapping[str, Any]) -> bool | None:
+def barracks_done(state: Mapping[str, Any]) -> bool | None:
     if "rooms" not in state:
         return None
     rooms = state.get("rooms")
     if not isinstance(rooms, list):
         return None
-    if not rooms:
-        return False
-
-    understood = False
     for room in rooms:
-        if isinstance(room, str):
-            understood = True
-            if "barracks" in room.casefold():
+        if isinstance(room, Mapping):
+            room_type = room.get("type")
+            if isinstance(room_type, str) and room_type.casefold() == "barracks":
                 return True
-        elif isinstance(room, Mapping):
-            for key in ("type", "room_type", "name", "id"):
-                value = room.get(key)
-                if isinstance(value, str):
-                    understood = True
-                    if "barracks" in value.casefold():
-                        return True
-    return False if understood else None
+    return False
 
 
 def _plan_barracks(
@@ -112,12 +101,16 @@ def _plan_barracks(
     if not isinstance(door_id, str) or not door_id:
         raise SkillPlanningError("door_id_unconfigured")
     tile_id = config.get("tile_id")
+    bed_count = config.get("barracks_bed_count", 4)
+    if isinstance(bed_count, bool) or not isinstance(bed_count, int) or bed_count <= 0:
+        raise SkillPlanningError("invalid_bed_count")
     return build_barracks(
         state,
         catalog,
         bed_id,
         door_id,
         tile_id if isinstance(tile_id, str) else None,
+        bed_count,
     )
 
 
@@ -150,8 +143,8 @@ register_goal(
 register_goal(
     Goal(
         id="barracks",
-        description="Plan a bed and door in a supported clear area",
-        is_done=_barracks_done,
+        description="Plan an enclosed room meeting Barracks constraints",
+        is_done=barracks_done,
         plan=_plan_barracks,
     ),
     rank=1,

@@ -81,15 +81,45 @@ def find_empty_rectangle(
     center: tuple[int, int] | None = None,
     reserved: set[tuple[int, int]] | None = None,
 ) -> dict[str, int] | None:
-    """Find a clear rectangle and return its game pivot and lower-left cell."""
+    """Find the nearest clear rectangle and return its pivot and lower-left."""
+    candidates = find_empty_rectangle_candidates(
+        map_rows,
+        origin,
+        width,
+        height,
+        center=center,
+        reserved=reserved,
+    )
+    for candidate in candidates:
+        if require_floor:
+            floor_row = candidate["row"] + 1
+            if floor_row >= len(map_rows) or any(
+                map_rows[floor_row][column] not in SOLID_MAP_CELLS
+                for column in range(candidate["column"], candidate["column"] + width)
+            ):
+                continue
+        return candidate
+    return None
+
+
+def find_empty_rectangle_candidates(
+    map_rows: Sequence[str],
+    origin: Mapping[str, int],
+    width: int,
+    height: int,
+    *,
+    center: tuple[int, int] | None = None,
+    reserved: set[tuple[int, int]] | None = None,
+) -> list[dict[str, int]]:
+    """Return all clear rectangles ordered by distance from the optional center."""
     map_width, map_height = _validate_map(map_rows)
     if width <= 0 or height <= 0:
         raise ValueError("rectangle dimensions must be positive")
     if width > map_width or height > map_height:
-        return None
+        return []
 
     reserved_cells = reserved or set()
-    candidates: list[tuple[int, int, int, int, int]] = []
+    candidates: list[tuple[int, int, int, dict[str, int]]] = []
     for bottom_row in range(map_height - 1, height - 2, -1):
         top_row = bottom_row - height + 1
         for left_column in range(map_width - width + 1):
@@ -108,14 +138,6 @@ def find_empty_rectangle(
             if not clear:
                 continue
 
-            if require_floor:
-                floor_row = bottom_row + 1
-                if floor_row >= map_height or any(
-                    map_rows[floor_row][column] not in SOLID_MAP_CELLS
-                    for column in range(left_column, left_column + width)
-                ):
-                    continue
-
             left_x = origin["x"] + left_column
             bottom_y = origin["y"] + map_height - 1 - bottom_row
             pivot_offset = width // 2 if width % 2 else width // 2 - 1
@@ -125,21 +147,26 @@ def find_empty_rectangle(
                 if center is not None
                 else 0
             )
-            candidates.append((distance, bottom_row, left_column, pivot_x, bottom_y))
+            candidates.append(
+                (
+                    distance,
+                    bottom_row,
+                    left_column,
+                    {
+                        "x": pivot_x,
+                        "y": bottom_y,
+                        "left_x": left_x,
+                        "bottom_y": bottom_y,
+                        "width": width,
+                        "height": height,
+                        "row": bottom_row,
+                        "column": left_column,
+                    },
+                )
+            )
 
-    if not candidates:
-        return None
-    _, bottom_row, left_column, pivot_x, bottom_y = min(candidates)
-    return {
-        "x": pivot_x,
-        "y": bottom_y,
-        "left_x": origin["x"] + left_column,
-        "bottom_y": bottom_y,
-        "width": width,
-        "height": height,
-        "row": bottom_row,
-        "column": left_column,
-    }
+    candidates.sort(key=lambda item: item[:3])
+    return [candidate for _, _, _, candidate in candidates]
 
 
 def state_map(state: Mapping[str, Any]) -> tuple[list[str], dict[str, int]]:
@@ -154,4 +181,3 @@ def state_map(state: Mapping[str, Any]) -> tuple[list[str], dict[str, int]]:
     if not isinstance(origin.get("x"), int) or not isinstance(origin.get("y"), int):
         raise ValueError("map origin must have integer x and y")
     return map_rows, {"x": origin["x"], "y": origin["y"]}
-

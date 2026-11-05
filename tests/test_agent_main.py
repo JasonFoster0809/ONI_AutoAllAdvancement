@@ -1,8 +1,61 @@
 import json
+from pathlib import Path
 
 from agent import agent_main
 from agent.planner import Goal
 from agent import planner
+
+
+def test_barracks_cli_overrides_bed_count_and_tile_id(tmp_path, monkeypatch):
+    fixtures = Path(__file__).parent / "fixtures"
+    (tmp_path / "oni_state.json").write_text(
+        (fixtures / "barracks_clear.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (tmp_path / "oni_catalog.json").write_text(
+        (fixtures / "barracks_catalog.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "agent-config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "priority_techs": ["FarmingTech"],
+                "pending_steps": 30,
+                "bed_id": "Bed",
+                "door_id": "Door",
+                "tile_id": None,
+                "barracks_bed_count": 1,
+                "goal_ranks": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    log_path = tmp_path / "logs" / "agent.jsonl"
+    monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
+
+    assert agent_main.run(
+        [
+            "--dry-run",
+            "--max-steps",
+            "1",
+            "--data-dir",
+            str(tmp_path),
+            "--config",
+            str(config_path),
+            "--goals",
+            "barracks",
+            "--barracks-bed-count",
+            "2",
+            "--tile-id",
+            "Tile",
+        ]
+    ) == 0
+
+    entry = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert entry["goal_id"] == "barracks"
+    assert sum(action["id"] == "Bed" for action in entry["actions"]) == 2
+    assert sum(action["id"] == "Tile" for action in entry["actions"]) == 18
 
 
 def test_dry_run_writes_jsonl_without_sending(tmp_path, monkeypatch, capsys):

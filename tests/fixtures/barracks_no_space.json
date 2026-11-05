@@ -1,0 +1,19 @@
+{
+  "resources": {"materials": {"SandStone": 1000}},
+  "rooms": [],
+  "building_list": [],
+  "world": {
+    "origin": {"x": -10, "y": 0},
+    "start": {"x": 0, "y": 3},
+    "map": [
+      "XXXXXXXXXXXXXXXXXXXX",
+      "XXXXXXXXXXXXXXXXXXXX",
+      "XXXXXXXXXXXXXXXXXXXX",
+      "XXXXXXXXXXXXXXXXXXXX",
+      "XXXXXXXXXXXXXXXXXXXX",
+      "XXXXXXXXXXXXXXXXXXXX",
+      "XXXXXXXXXXXXXXXXXXXX",
+      "XXXXXXXXXXXXXXXXXXXX"
+    ]
+  }
+}

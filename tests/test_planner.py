@@ -14,6 +14,7 @@ CONFIG = {
     "bed_id": "Bed",
     "door_id": "Door",
     "tile_id": "Tile",
+    "barracks_bed_count": 2,
 }
 
 
@@ -36,11 +37,13 @@ def test_research_goal_has_priority_over_barracks():
     assert step["actions"] == [{"type": "set_research", "tech": "FarmingTech"}]
 
 
-def test_barracks_goal_plans_tile_bed_door_when_room_not_built():
+def test_barracks_goal_plans_enclosed_room_when_not_built():
     state = load_fixture("goal_barracks_unbuilt.json")
     step = next_step(state, load_catalog(), CONFIG, {})
     assert step["goal_id"] == "barracks"
-    assert [action["id"] for action in step["actions"]] == ["Tile", "Tile", "Tile", "Bed", "Door"]
+    assert sum(action["id"] == "Tile" for action in step["actions"]) == 18
+    assert sum(action["id"] == "Bed" for action in step["actions"]) == 2
+    assert sum(action["id"] == "Door" for action in step["actions"]) == 1
     assert all(action["type"] == "build" for action in step["actions"])
 
 
@@ -55,6 +58,12 @@ def test_done_and_pending_goals_are_skipped():
     pending_step = next_step(pending_state, load_catalog(), CONFIG, pending)
     assert pending_step["goal_id"] == "no_goal"
     assert {"goal_id": "barracks", "reason": "pending"} in pending_step["skipped"]
+
+
+def test_barracks_done_requires_a_reported_barracks_room():
+    assert planner.barracks_done({}) is None
+    assert planner.barracks_done({"rooms": []}) is False
+    assert planner.barracks_done({"rooms": [{"type": "Barracks"}]}) is True
 
 
 def test_plan_errors_are_skipped_and_later_goals_are_considered():

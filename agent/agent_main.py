@@ -34,6 +34,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "bed_id": None,
     "door_id": None,
     "tile_id": None,
+    "barracks_bed_count": 4,
     "goal_ranks": {},
 }
 
@@ -57,6 +58,9 @@ def load_agent_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     for key in ("bed_id", "door_id", "tile_id"):
         if config[key] is not None and (not isinstance(config[key], str) or not config[key]):
             raise ValueError(f"{key} must be a non-empty string or null")
+    bed_count = config["barracks_bed_count"]
+    if isinstance(bed_count, bool) or not isinstance(bed_count, int) or bed_count <= 0:
+        raise ValueError("barracks_bed_count must be a positive integer")
     return config
 
 
@@ -95,6 +99,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--interval-seconds", type=float, default=2.0)
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    parser.add_argument("--barracks-bed-count", type=int)
+    parser.add_argument("--tile-id")
     parser.add_argument(
         "--goals",
         type=_parse_goals,
@@ -105,6 +111,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--max-steps must be non-negative")
     if args.interval_seconds <= 0:
         parser.error("--interval-seconds must be positive")
+    if args.barracks_bed_count is not None and args.barracks_bed_count <= 0:
+        parser.error("--barracks-bed-count must be positive")
     return args
 
 
@@ -116,6 +124,10 @@ def run(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     config = load_agent_config(args.config)
+    if args.barracks_bed_count is not None:
+        config["barracks_bed_count"] = args.barracks_bed_count
+    if args.tile_id is not None:
+        config["tile_id"] = args.tile_id
     enabled_goals = args.goals or registered_goal_ids()
     pending: dict[str, dict[str, Any]] = {}
     step = 0

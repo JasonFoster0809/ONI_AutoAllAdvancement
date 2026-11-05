@@ -4,5 +4,6 @@
   "bed_id": null,
   "door_id": null,
   "tile_id": null,
+  "barracks_bed_count": 4,
   "goal_ranks": {}
 }

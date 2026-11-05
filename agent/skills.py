@@ -2,19 +2,33 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .catalog import CatalogError, building_dimensions, choose_materials, get_building
-from .maputils import BUILDABLE_MAP_CELLS, SOLID_MAP_CELLS, cell_at_xy, find_empty_rectangle, state_map
+from .catalog import (
+    CatalogError,
+    building_dimensions,
+    choose_materials,
+    get_building,
+    material_categories,
+)
+from .maputils import (
+    BUILDABLE_MAP_CELLS,
+    cell_at_xy,
+    find_empty_rectangle,
+    find_empty_rectangle_candidates,
+    state_map,
+)
 
 
 class SkillPlanningError(ValueError):
     """A skill could not produce a safe action list."""
 
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
+    def __init__(self, reason: str, details: str | None = None) -> None:
+        super().__init__(f"{reason}: {details}" if details else reason)
         self.reason = reason
+        self.details = details
 
 
 def _map_context(state: Mapping[str, Any]) -> tuple[list[str], dict[str, int], tuple[int, int] | None]:
@@ -106,89 +120,265 @@ def build_barracks(
     catalog: Sequence[Mapping[str, Any]],
     bed_id: str,
     door_id: str,
-    tile_id: str | None = None,
+    tile_id: str | None,
+    bed_count: int,
 ) -> list[dict[str, Any]]:
-    """Plan a bed and door, adding floor tiles only where support is absent."""
+    """Plan a closed Barracks footprint without sending build actions."""
+    if isinstance(bed_count, bool) or not isinstance(bed_count, int) or bed_count <= 0:
+        raise SkillPlanningError("invalid_bed_count")
+    if not isinstance(tile_id, str) or not tile_id:
+        raise SkillPlanningError("tile_id_unconfigured")
+
     bed = _get_building(catalog, bed_id)
     door = _get_building(catalog, door_id)
+    tile = _get_building(catalog, tile_id)
     bed_width, bed_height = building_dimensions(bed)
     door_width, door_height = building_dimensions(door)
-    footprint_width = bed_width + door_width
-    footprint_height = max(bed_height, door_height)
+    tile_width, tile_height = building_dimensions(tile)
+    if (tile_width, tile_height) != (1, 1):
+        raise SkillPlanningError("invalid_tile_dimensions")
+    if door_width != 1 or door_height > bed_height:
+        raise SkillPlanningError("door_does_not_fit_room")
+
+    interior_width = max(bed_width * bed_count, math.ceil(12 / bed_height))
+    room_size = interior_width * bed_height
+    if room_size > 64:
+        raise SkillPlanningError("barracks_size_out_of_range")
+
     rows, origin, center = _map_context(state)
-    map_width = len(rows[0])
-    map_height = len(rows)
-    placements: list[tuple[int, int, int, list[int]]] = []
-
-    for bottom_row in range(map_height - 1, footprint_height - 2, -1):
-        top_row = bottom_row - footprint_height + 1
-        for left_column in range(map_width - footprint_width + 1):
-            clear = all(
-                rows[row][column] in BUILDABLE_MAP_CELLS
-                for row in range(top_row, bottom_row + 1)
-                for column in range(left_column, left_column + footprint_width)
-            )
-            if not clear:
-                continue
-
-            left_x = origin["x"] + left_column
-            bottom_y = origin["y"] + map_height - 1 - bottom_row
-            unsupported_columns: list[int] = []
-            supported = True
-            for x in range(left_x, left_x + footprint_width):
-                support_cell = cell_at_xy(rows, origin, x, bottom_y - 1)
-                if support_cell in SOLID_MAP_CELLS:
-                    continue
-                if support_cell in BUILDABLE_MAP_CELLS:
-                    unsupported_columns.append(x)
-                    continue
-                supported = False
-                break
-            if not supported:
-                continue
-
-            bed_pivot = _pivot_x(left_x, bed_width)
-            distance = (
-                abs(bed_pivot - center[0]) + abs(bottom_y - center[1])
-                if center is not None
-                else 0
-            )
-            placements.append((distance, bottom_row, left_column, unsupported_columns))
-
-    if not placements:
+    existing_tiles = _existing_tile_positions(state, tile_id)
+    placement = _find_barracks_placement(
+        rows,
+        origin,
+        interior_width,
+        bed_height,
+        door_height,
+        existing_tiles,
+        center,
+    )
+    if placement is None:
         raise SkillPlanningError("no_valid_placement")
 
-    _, bottom_row, left_column, unsupported_columns = min(placements)
-    left_x = origin["x"] + left_column
-    bottom_y = origin["y"] + map_height - 1 - bottom_row
-    actions: list[dict[str, Any]] = []
-
-    if unsupported_columns:
-        if not isinstance(tile_id, str) or not tile_id:
-            raise SkillPlanningError("tile_id_unconfigured")
-        try:
-            tile = _get_building(catalog, tile_id)
-            tile_width, tile_height = building_dimensions(tile)
-        except CatalogError as error:
-            raise SkillPlanningError(error.reason) from error
-        if (tile_width, tile_height) != (1, 1):
-            raise SkillPlanningError("invalid_tile_dimensions")
-        tile_materials = _get_materials(tile, state)
-        actions.extend(
-            _build_action(tile, state, x, bottom_y - 1, tile_materials)
-            for x in unsupported_columns
-        )
-
-    bed_materials = _get_materials(bed, state)
-    door_materials = _get_materials(door, state)
-    actions.append(
-        _build_action(bed, state, _pivot_x(left_x, bed_width), bottom_y, bed_materials)
+    materials_by_key, selected_materials = _choose_combined_materials(
+        state,
+        (
+            (bed, bed_count),
+            (door, 1),
+            (tile, len(placement["new_tiles"])),
+        ),
     )
-    door_left = left_x + bed_width
+
+    actions = [
+        _build_action(tile, state, x, y, _elements_for_building(tile, materials_by_key, selected_materials))
+        for x, y in placement["new_tiles"]
+    ]
+    bed_left = placement["left_x"]
+    bed_bottom = placement["bottom_y"]
+    bed_elements = _elements_for_building(bed, materials_by_key, selected_materials)
+    for bed_index in range(bed_count):
+        bed_x = bed_left + bed_index * bed_width
+        actions.append(
+            _build_action(bed, state, _pivot_x(bed_x, bed_width), bed_bottom, bed_elements)
+        )
+    door_elements = _elements_for_building(door, materials_by_key, selected_materials)
     actions.append(
-        _build_action(door, state, _pivot_x(door_left, door_width), bottom_y, door_materials)
+        _build_action(
+            door,
+            state,
+            placement["door_x"],
+            placement["door_y"],
+            door_elements,
+        )
     )
     return actions
+
+
+def _material_group_key(category: Mapping[str, Any]) -> tuple[str, tuple[str, ...]]:
+    name = category.get("category")
+    options = category.get("options")
+    if not isinstance(name, str) or not name:
+        raise SkillPlanningError("invalid_material_category")
+    if not isinstance(options, list) or any(not isinstance(option, str) for option in options):
+        raise SkillPlanningError("invalid_material_options")
+    return name.casefold(), tuple(sorted(option.casefold() for option in options))
+
+
+def _choose_combined_materials(
+    state: Mapping[str, Any],
+    building_counts: Sequence[tuple[Mapping[str, Any], int]],
+) -> tuple[dict[tuple[str, tuple[str, ...]], Mapping[str, Any]], dict[tuple[str, tuple[str, ...]], str]]:
+    groups: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
+    for building, count in building_counts:
+        if count <= 0:
+            continue
+        for category in material_categories(building):
+            key = _material_group_key(category)
+            mass = category.get("mass_kg")
+            if (
+                isinstance(mass, bool)
+                or not isinstance(mass, (int, float))
+                or not math.isfinite(mass)
+                or mass < 0
+            ):
+                raise SkillPlanningError(
+                    "construction_mass_unavailable",
+                    str(category.get("category", "unknown")),
+                )
+            group = groups.get(key)
+            if group is None:
+                group = {
+                    "category": category["category"],
+                    "options": list(category["options"]),
+                    "mass_kg": 0.0,
+                }
+                groups[key] = group
+            group["mass_kg"] += mass * count
+
+    categories = list(groups.values())
+    try:
+        selected = choose_materials({"materials": categories}, state)
+    except CatalogError as error:
+        if error.reason == "insufficient_material":
+            raise SkillPlanningError(
+                error.reason,
+                _material_shortfall_details(categories, state),
+            ) from error
+        raise SkillPlanningError(error.reason) from error
+
+    selected_by_key = {
+        key: element for key, element in zip(groups, selected)
+    }
+    return groups, selected_by_key
+
+
+def _material_shortfall_details(
+    categories: Sequence[Mapping[str, Any]], state: Mapping[str, Any]
+) -> str:
+    resources = state.get("resources")
+    stock = resources.get("materials") if isinstance(resources, Mapping) else None
+    stock_items = stock.items() if isinstance(stock, Mapping) else ()
+    stock_by_name = {
+        name.casefold(): amount
+        for name, amount in stock_items
+        if isinstance(name, str)
+        and isinstance(amount, (int, float))
+        and not isinstance(amount, bool)
+        and math.isfinite(amount)
+    }
+    details: list[str] = []
+    for category in categories:
+        options = category.get("options", [])
+        required = category.get("mass_kg", 0.0)
+        best_option = max(
+            options,
+            key=lambda option: stock_by_name.get(option.casefold(), 0.0),
+            default=None,
+        )
+        available = (
+            stock_by_name.get(best_option.casefold(), 0.0)
+            if isinstance(best_option, str)
+            else 0.0
+        )
+        missing = max(0.0, required - available)
+        details.append(
+            f"{category.get('category', 'material')}: need {required:.1f} kg, "
+            f"available {available:.1f} kg, missing {missing:.1f} kg"
+        )
+    return "; ".join(details)
+
+
+def _elements_for_building(
+    building: Mapping[str, Any],
+    material_groups: Mapping[tuple[str, tuple[str, ...]], Mapping[str, Any]],
+    selected_materials: Mapping[tuple[str, tuple[str, ...]], str],
+) -> list[str]:
+    elements: list[str] = []
+    for category in material_categories(building):
+        key = _material_group_key(category)
+        if key not in material_groups or key not in selected_materials:
+            raise SkillPlanningError("material_selection_incomplete")
+        elements.append(selected_materials[key])
+    return elements
+
+
+def _existing_tile_positions(
+    state: Mapping[str, Any], tile_id: str
+) -> set[tuple[int, int]]:
+    buildings = state.get("building_list")
+    if not isinstance(buildings, list):
+        return set()
+    return {
+        (entry["x"], entry["y"])
+        for entry in buildings
+        if isinstance(entry, Mapping)
+        and entry.get("id") == tile_id
+        and entry.get("state") in ("built", "under_construction")
+        and isinstance(entry.get("x"), int)
+        and not isinstance(entry.get("x"), bool)
+        and isinstance(entry.get("y"), int)
+        and not isinstance(entry.get("y"), bool)
+    }
+
+
+def _find_barracks_placement(
+    rows: Sequence[str],
+    origin: Mapping[str, int],
+    interior_width: int,
+    interior_height: int,
+    door_height: int,
+    existing_tiles: set[tuple[int, int]],
+    center: tuple[int, int] | None,
+) -> dict[str, Any] | None:
+    candidates = find_empty_rectangle_candidates(
+        rows,
+        origin,
+        interior_width,
+        interior_height,
+        center=center,
+    )
+    for candidate in candidates:
+        left_x = candidate["left_x"]
+        bottom_y = candidate["bottom_y"]
+        right_x = left_x + interior_width - 1
+        top_y = bottom_y + interior_height - 1
+        door_slots = [
+            (wall_x, door_y)
+            for wall_x in (right_x + 1, left_x - 1)
+            for door_y in range(bottom_y, top_y - door_height + 2)
+        ]
+        perimeter = {
+            *((x, bottom_y - 1) for x in range(left_x - 1, right_x + 2)),
+            *((x, top_y + 1) for x in range(left_x - 1, right_x + 2)),
+            *((left_x - 1, y) for y in range(bottom_y, top_y + 1)),
+            *((right_x + 1, y) for y in range(bottom_y, top_y + 1)),
+        }
+
+        for door_x, door_y in door_slots:
+            door_cells = {(door_x, y) for y in range(door_y, door_y + door_height)}
+            if any(cell_at_xy(rows, origin, x, y) not in BUILDABLE_MAP_CELLS for x, y in door_cells):
+                continue
+
+            new_tiles: list[tuple[int, int]] = []
+            valid = True
+            for x, y in sorted(perimeter):
+                if (x, y) in door_cells:
+                    continue
+                cell = cell_at_xy(rows, origin, x, y)
+                if cell in BUILDABLE_MAP_CELLS:
+                    new_tiles.append((x, y))
+                elif cell == "F" and (x, y) in existing_tiles:
+                    continue
+                else:
+                    valid = False
+                    break
+            if valid:
+                return {
+                    **candidate,
+                    "door_x": door_x,
+                    "door_y": door_y,
+                    "new_tiles": new_tiles,
+                }
+    return None
 
 
 def build_research_area(

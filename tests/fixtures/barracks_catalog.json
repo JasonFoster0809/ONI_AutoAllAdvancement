@@ -1,0 +1,29 @@
+[
+  {
+    "id": "Bed",
+    "width": 3,
+    "height": 2,
+    "materials": [
+      {"category": "Rock", "options": ["SandStone"], "mass_kg": 100}
+    ],
+    "unlocked": true
+  },
+  {
+    "id": "Door",
+    "width": 1,
+    "height": 2,
+    "materials": [
+      {"category": "Rock", "options": ["SandStone"], "mass_kg": 40}
+    ],
+    "unlocked": true
+  },
+  {
+    "id": "Tile",
+    "width": 1,
+    "height": 1,
+    "materials": [
+      {"category": "Rock", "options": ["SandStone"], "mass_kg": 10}
+    ],
+    "unlocked": true
+  }
+]
