@@ -793,8 +793,11 @@ pytest; C# mới được build, không chạy trong game.
 | 2026-11-06 01:07:29 | XONG | Thêm `agent/replay.py`; rule log có state/history/pending/cooldown được chạy lại và so sánh action. Log cũ thiếu context được ghi unavailable; catalog có thể đã đổi. | 15 passed (replay + agent main) | Không áp dụng (Python-only) | `54ae792` |
 | 2026-11-06 01:08:18 | XONG | Thêm `agent/metrics.py` và `agent_main --report`, ghi `logs/metrics.json`: cycle mới nhất quan sát được, command ok/blocked, average seconds/cycle nếu đo được, dupe count mới nhất. | 15 passed (metrics + agent main) | Không áp dụng (Python-only) | `7a04d99` |
 | 2026-11-06 01:10:43 | XONG | Xác minh `Operational.Flags`, `Flag.Name`/`FlagType` bằng `ilspycmd`; thêm tùy chọn `operational_flags:[{name,satisfied}]` vào building đã xây, trên main thread, với catch riêng. Chỉ build, không chạy game. | Full suite sau đó: 125 passed | Build succeeded, 0 warnings, 0 errors sau khi sửa lỗi cú pháp ban đầu | `6e87e4e` |
-| 2026-11-06 01:11 | XONG | Cleanup check và đồng bộ README/API, architecture, roadmap, playbook. `.gitignore` chặn `.env`, `.env.*`, `*key*`, `*.sav`; `git diff --check` sạch. Full test/build đã chạy trên commit `6e87e4e`. | 125 passed | Build succeeded, 0 warnings, 0 errors | Sẽ ghi hash commit sau khi commit |
-| Pending | CHƯA XONG | Bước 9: pytest bổ sung cho nhánh lỗi `oni_client.py`/`rule_engine.py`, rồi refactor nhỏ nếu an toàn. | Pending | Không áp dụng nếu Python-only | Pending |
+| 2026-11-06 01:12:42 | XONG | Cleanup check và đồng bộ README/API, architecture, roadmap, playbook. `.gitignore` chặn `.env`, `.env.*`, `*key*`, `*.sav`; `git diff --check` sạch. Full test/build đã chạy trên commit `6e87e4e`. | 125 passed | Build succeeded, 0 warnings, 0 errors | `0cb26ee` |
+| 2026-11-06 01:14:43 | XONG | Bước 9: thêm tests cho file state/rules thiếu hoặc JSON lỗi, response command thiếu `results`, dữ liệu nested/count không đầy đủ; `count`/`stored_mass` trả `unknown` khi metadata building cần thiết bị thiếu. Refactor nhỏ để log và chẩn đoán dùng chung `state_metrics`. Lượt pytest đầu có 2 test fail do thiếu import trong test và semantics count; đã sửa, không lặp cùng lỗi 3 lần. | 47 passed (nhắm mục tiêu); full `python -m pytest -q`: 129 passed | Không áp dụng (Python-only); build gần nhất: succeeded, 0 warnings, 0 errors | `412d06c` |
+
+Yêu cầu tiếp tục tới mục 12 không thể thực hiện: danh sách được cung cấp chỉ có
+mục 1–9 và không mô tả mục 12. Không tự tạo việc ngoài phạm vi.
 
 ### Xác minh ID và quyết định bảo thủ
 
@@ -849,6 +852,8 @@ git check-ignore -v -- .env .env.local sample-key.json test.sav
   WashBasin, PlanterBox từ seed tới thu hoạch, MassageTable có điện,
   StorageLocker footprint, và rules ở biên cycle 10/30/100. Không dùng save
   quan trọng để kiểm thử.
+- Python item 9 đã kiểm tra offline bằng `python -m pytest -q`: **129 passed**.
+  Thay đổi C# chưa được test trong game; không chạy game/deploy hoặc push.
 
 **Không chạy game, deploy, copy DLL, sửa save hoặc push.** Không có key/token
 hay save nào được thêm vào repo. Kết quả kiểm thử và thời gian ở trên là
