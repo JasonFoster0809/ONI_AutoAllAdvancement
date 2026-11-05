@@ -1,0 +1,19 @@
+{
+  "cycle": 42,
+  "building_list": [
+    {
+      "id": "MineralDeoxidizer",
+      "x": 12,
+      "y": 8,
+      "cell": 684,
+      "orientation": "Neutral",
+      "elements": ["Gold"],
+      "state": "built",
+      "rel_x": 2,
+      "rel_y": -1,
+      "operational": true,
+      "powered": true,
+      "stored": {"Algae": 120.5}
+    }
+  ]
+}

@@ -5,6 +5,8 @@ from pathlib import Path
 
 from agent import oni_client
 
+FIXTURES = Path(__file__).parent / "fixtures"
+
 
 def test_read_state_warns_when_stale(tmp_path):
     state_path = tmp_path / "oni_state.json"
@@ -14,6 +16,32 @@ def test_read_state_warns_when_stale(tmp_path):
         warnings.simplefilter("always")
         assert oni_client.read_state(tmp_path, now=modified + 11)["cycle"] == 1
     assert any("stale" in str(item.message) for item in caught)
+
+
+def test_read_state_accepts_operational_building_and_legacy_fixtures(tmp_path):
+    cases = (
+        ("operational_mineral_deoxidizer.json", True, True),
+        ("unpowered_mineral_deoxidizer.json", False, False),
+        ("legacy_building_state.json", None, None),
+    )
+    state_path = tmp_path / "oni_state.json"
+    for fixture_name, operational, powered in cases:
+        state_path.write_text(
+            (FIXTURES / fixture_name).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        state = oni_client.read_state(tmp_path)
+        assert len(state["building_list"]) == 1
+        building = state["building_list"][0]
+        assert building["id"] == "MineralDeoxidizer"
+        if operational is None:
+            assert "operational" not in building
+            assert "powered" not in building
+            assert "stored" not in building
+        else:
+            assert building["operational"] is operational
+            assert building["powered"] is powered
+            assert building["stored"]["Algae"] == 120.5
 
 
 def test_send_command_waits_for_matching_result(tmp_path, monkeypatch):
