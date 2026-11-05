@@ -1,0 +1,37 @@
+[
+  {
+    "id": "LiquidPumpingStation",
+    "unlocked": true,
+    "width": 2,
+    "height": 4,
+    "materials": [{"category": "BuildableRaw", "mass_kg": 400, "options": ["SandStone"]}]
+  },
+  {
+    "id": "WashBasin",
+    "unlocked": true,
+    "width": 2,
+    "height": 3,
+    "materials": [{"category": "BuildableRaw&Metal", "mass_kg": 50, "options": ["SandStone", "ZincOre"]}]
+  },
+  {
+    "id": "PlanterBox",
+    "unlocked": true,
+    "width": 1,
+    "height": 1,
+    "materials": [{"category": "Farmable", "mass_kg": 100, "options": ["Dirt"]}]
+  },
+  {
+    "id": "MassageTable",
+    "unlocked": true,
+    "width": 2,
+    "height": 2,
+    "materials": [{"category": "BuildableRaw", "mass_kg": 200, "options": ["SandStone"]}]
+  },
+  {
+    "id": "StorageLocker",
+    "unlocked": true,
+    "width": 1,
+    "height": 2,
+    "materials": [{"category": "BuildableRaw&Metal", "mass_kg": 400, "options": ["SandStone", "ZincOre"]}]
+  }
+]

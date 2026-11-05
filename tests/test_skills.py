@@ -5,10 +5,14 @@ import pytest
 
 from agent.skills import (
     SkillPlanningError,
+    build_food_basic,
     build_mess_area,
     build_oxygen_setup,
     build_power_basic,
+    build_recreation,
+    build_storage_area,
     build_toilet_room,
+    build_water_setup,
     build_bedroom,
     build_ladder_shaft,
     build_research_area,
@@ -46,6 +50,10 @@ def building(building_id, width=1, height=1, *, unlocked=True):
 
 def load_construction_catalog():
     return load_emergency_fixture("construction_skills_catalog.json")
+
+
+def load_basic_skills_catalog():
+    return load_emergency_fixture("basic_skills_catalog.json")
 
 
 def supported_construction_state():
@@ -283,6 +291,102 @@ def test_build_power_basic_checks_unlocks_materials_and_map_support():
     blocked["world"]["map"] = ["X" * 41 for _ in range(41)]
     with pytest.raises(SkillPlanningError, match="no_valid_placement"):
         build_power_basic(blocked, load_construction_catalog())
+
+
+def test_build_water_setup_places_unlocked_pump_near_liquid_and_wash_basin():
+    state = supported_construction_state()
+    state["resources"]["materials"] = {"SandStone": 1000, "ZincOre": 1000}
+    rows = state["world"]["map"]
+    rows[10] = rows[10][:20] + "L" + rows[10][21:]
+    rows[15] = "#" * 41
+
+    plan = build_water_setup(state, load_basic_skills_catalog())
+
+    assert [action["id"] for action in plan.actions] == [
+        "LiquidPumpingStation",
+        "WashBasin",
+    ]
+    assert all(action["elements"] for action in plan.actions)
+    assert plan.warnings == [
+        "pump_placement_uses_mapped_liquid_proximity_heuristic",
+        "WashBasin_requires_water_delivery",
+    ]
+
+
+def test_build_water_setup_requires_liquid_and_available_materials():
+    state = supported_construction_state()
+    with pytest.raises(SkillPlanningError, match="liquid_source_unavailable"):
+        build_water_setup(state, load_basic_skills_catalog())
+
+    rows = state["world"]["map"]
+    rows[10] = rows[10][:20] + "L" + rows[10][21:]
+    rows[15] = "#" * 41
+    state["resources"]["materials"] = {"SandStone": 10, "ZincOre": 10}
+    with pytest.raises(SkillPlanningError, match="insufficient_material"):
+        build_water_setup(state, load_basic_skills_catalog())
+
+
+def test_food_recreation_and_storage_skills_check_catalog_and_stock():
+    state = supported_construction_state()
+    state["resources"]["materials"] = {
+        "Dirt": 500,
+        "SandStone": 1000,
+        "ZincOre": 1000,
+    }
+    catalog = load_basic_skills_catalog()
+
+    food = build_food_basic(state, catalog)
+    recreation = build_recreation(state, catalog)
+    storage = build_storage_area(state, catalog)
+    assert food.actions[0]["id"] == "PlanterBox"
+    assert food.warnings == ["PlanterBox_requires_crop_seed_and_planting"]
+    assert recreation.actions[0]["id"] == "MassageTable"
+    assert recreation.warnings == ["MassageTable_requires_power"]
+    assert storage.actions[0]["id"] == "StorageLocker"
+
+    for action, building_id, skill in (
+        (food.actions[0], "PlanterBox", build_food_basic),
+        (recreation.actions[0], "MassageTable", build_recreation),
+        (storage.actions[0], "StorageLocker", build_storage_area),
+    ):
+        state["building_list"] = [
+            {
+                "id": building_id,
+                "state": "under_construction",
+                "x": action["x"],
+                "y": action["y"],
+            }
+        ]
+        assert skill(state, catalog).actions == []
+        state["building_list"] = []
+
+
+def test_new_basic_skills_reject_locked_catalog_entries():
+    state = supported_construction_state()
+    catalog = load_basic_skills_catalog()
+    next(item for item in catalog if item["id"] == "PlanterBox")["unlocked"] = False
+    with pytest.raises(
+        SkillPlanningError, match="TODO_NOT_IMPLEMENTED_food_building_unavailable"
+    ):
+        build_food_basic(state, catalog)
+
+
+def test_new_basic_skills_skip_when_material_stock_is_insufficient():
+    state = supported_construction_state()
+    state["resources"]["materials"] = {}
+    rows = state["world"]["map"]
+    rows[10] = rows[10][:20] + "L" + rows[10][21:]
+    rows[15] = "#" * 41
+    catalog = load_basic_skills_catalog()
+
+    for skill in (
+        build_water_setup,
+        build_food_basic,
+        build_recreation,
+        build_storage_area,
+    ):
+        with pytest.raises(SkillPlanningError, match="insufficient_material"):
+            skill(state, catalog)
 
 
 def test_low_oxygen_builds_deoxidizer_near_dupe_with_available_catalog_materials():

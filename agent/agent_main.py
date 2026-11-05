@@ -30,10 +30,14 @@ from .skills import (
     SkillPlan,
     SkillPlanningError,
     build_barracks,
+    build_food_basic,
     build_mess_area,
     build_oxygen_setup,
     build_power_basic,
+    build_recreation,
+    build_storage_area,
     build_toilet_room,
+    build_water_setup,
     plan_emergency_actions,
 )
 
@@ -376,6 +380,10 @@ def _rule_skill_executors(config: Mapping[str, Any]) -> dict[str, Any]:
         "build_mess_area": build_mess_area,
         "build_toilet_room": build_toilet_room,
         "build_power_basic": build_power_basic,
+        "build_water_setup": build_water_setup,
+        "build_food_basic": build_food_basic,
+        "build_recreation": build_recreation,
+        "build_storage_area": build_storage_area,
     }
     executors = {
         name: (

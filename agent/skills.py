@@ -19,6 +19,7 @@ from .maputils import (
     cell_at_xy,
     find_empty_rectangle,
     find_empty_rectangle_candidates,
+    is_liquid,
     row_col_to_xy,
     state_map,
     xy_to_row_col,
@@ -503,6 +504,266 @@ def build_power_basic(
         for offset in range(layout_width)
     )
     return SkillPlan(actions, ["basic_power_layout_not_tested_in_game"])
+
+
+def build_water_setup(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+) -> SkillPlan:
+    """Plan a liquid pump near mapped liquid and one wash basin."""
+    pump = _get_building(catalog, "LiquidPumpingStation")
+    basin = _get_building(catalog, "WashBasin")
+    pump_width, pump_height = building_dimensions(pump)
+    basin_width, basin_height = building_dimensions(basin)
+    entries = _known_buildings(state)
+    pump_entry = next(
+        (
+            entry for entry in entries
+            if entry.get("id") == "LiquidPumpingStation"
+            and entry.get("state") in {"built", "under_construction"}
+        ),
+        None,
+    )
+    basin_exists = any(
+        entry.get("id") == "WashBasin"
+        and entry.get("state") in {"built", "under_construction"}
+        for entry in entries
+    )
+    if pump_entry is not None and basin_exists:
+        return SkillPlan([], [])
+
+    rows, origin, center = _map_context(state)
+    reserved = _reserved_building_cells(state, catalog)
+    pump_placement: Mapping[str, int] | None = None
+    if pump_entry is None:
+        liquid_cells = [
+            row_col_to_xy(row, column, origin, map_height=len(rows))
+            for row, map_row in enumerate(rows)
+            for column, cell in enumerate(map_row)
+            if is_liquid(cell)
+        ]
+        if not liquid_cells:
+            raise SkillPlanningError("liquid_source_unavailable")
+        candidates = [
+            candidate
+            for candidate in find_empty_rectangle_candidates(
+                rows,
+                origin,
+                pump_width,
+                pump_height,
+                center=liquid_cells[0],
+                reserved=reserved,
+            )
+            if candidate["row"] + 1 < len(rows)
+            and all(
+                rows[candidate["row"] + 1][column] in {"#", "F", "X"}
+                for column in range(
+                    candidate["column"], candidate["column"] + pump_width
+                )
+            )
+            and min(
+                abs(candidate["left_x"] + dx - liquid_x)
+                + abs(candidate["bottom_y"] + dy - liquid_y)
+                for liquid_x, liquid_y in liquid_cells
+                for dx in range(pump_width)
+                for dy in range(pump_height)
+            ) <= 1
+        ]
+        if not candidates:
+            raise SkillPlanningError("no_pump_placement_near_liquid")
+        pump_placement = candidates[0]
+        pump_center = (pump_placement["x"], pump_placement["y"])
+        for dx in range(pump_width):
+            for dy in range(pump_height):
+                reserved.add(
+                    (
+                        pump_placement["left_x"] + dx,
+                        pump_placement["bottom_y"] + dy,
+                    )
+                )
+    else:
+        pump_x, pump_y = pump_entry.get("x"), pump_entry.get("y")
+        if not all(
+            isinstance(value, int) and not isinstance(value, bool)
+            for value in (pump_x, pump_y)
+        ):
+            raise SkillPlanningError("existing_pump_position_unknown")
+        pump_center = (pump_x, pump_y)
+
+    basin_placement: Mapping[str, int] | None = None
+    if not basin_exists:
+        basin_candidates = [
+            candidate
+            for candidate in find_empty_rectangle_candidates(
+                rows,
+                origin,
+                basin_width,
+                basin_height,
+                center=pump_center if pump_center else center,
+                reserved=reserved,
+            )
+            if candidate["row"] + 1 < len(rows)
+            and all(
+                rows[candidate["row"] + 1][column] in {"#", "F", "X"}
+                for column in range(
+                    candidate["column"], candidate["column"] + basin_width
+                )
+            )
+        ]
+        if not basin_candidates:
+            raise SkillPlanningError("no_basin_placement")
+        basin_placement = basin_candidates[0]
+
+    builds = []
+    if pump_placement is not None:
+        builds.append((pump, 1))
+    if basin_placement is not None:
+        builds.append((basin, 1))
+    materials_by_key, selected_materials = _choose_combined_materials(
+        state, builds
+    )
+    actions: list[dict[str, Any]] = []
+    if pump_placement is not None:
+        actions.append(
+            _build_action(
+                pump,
+                state,
+                pump_placement["x"],
+                pump_placement["y"],
+                _elements_for_building(pump, materials_by_key, selected_materials),
+            )
+        )
+    if basin_placement is not None:
+        actions.append(
+            _build_action(
+                basin,
+                state,
+                basin_placement["x"],
+                basin_placement["y"],
+                _elements_for_building(basin, materials_by_key, selected_materials),
+            )
+        )
+    return SkillPlan(
+        actions,
+        [
+            "pump_placement_uses_mapped_liquid_proximity_heuristic",
+            "WashBasin_requires_water_delivery",
+        ],
+    )
+
+
+def build_food_basic(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+) -> SkillPlan:
+    """Plan one unlocked PlanterBox; seeds and planting remain separate."""
+    planter = next(
+        (item for item in catalog if item.get("id") == "PlanterBox"),
+        None,
+    )
+    if planter is None or planter.get("unlocked") is not True:
+        raise SkillPlanningError("TODO_NOT_IMPLEMENTED_food_building_unavailable")
+    planter = _get_building(catalog, "PlanterBox")
+    if any(
+        entry.get("id") == "PlanterBox"
+        and entry.get("state") in {"built", "under_construction"}
+        for entry in _known_buildings(state)
+    ):
+        return SkillPlan([], [])
+    width, height = building_dimensions(planter)
+    rows, origin, center = _map_context(state)
+    placement = next(
+        (
+            candidate
+            for candidate in find_empty_rectangle_candidates(
+                rows, origin, width, height, center=center
+            )
+            if candidate["row"] + 1 < len(rows)
+            and all(
+                rows[candidate["row"] + 1][column] in {"#", "F", "X"}
+                for column in range(
+                    candidate["column"], candidate["column"] + width
+                )
+            )
+        ),
+        None,
+    )
+    if placement is None:
+        raise SkillPlanningError("no_valid_placement")
+    action = _build_action(planter, state, placement["x"], placement["y"])
+    return SkillPlan([action], ["PlanterBox_requires_crop_seed_and_planting"])
+
+
+def build_recreation(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+) -> SkillPlan:
+    """Plan one unlocked MassageTable on a supported floor."""
+    table = _get_building(catalog, "MassageTable")
+    if any(
+        entry.get("id") == "MassageTable"
+        and entry.get("state") in {"built", "under_construction"}
+        for entry in _known_buildings(state)
+    ):
+        return SkillPlan([], [])
+    width, height = building_dimensions(table)
+    rows, origin, center = _map_context(state)
+    placement = next(
+        (
+            candidate
+            for candidate in find_empty_rectangle_candidates(
+                rows, origin, width, height, center=center
+            )
+            if candidate["row"] + 1 < len(rows)
+            and all(
+                rows[candidate["row"] + 1][column] in {"#", "F", "X"}
+                for column in range(
+                    candidate["column"], candidate["column"] + width
+                )
+            )
+        ),
+        None,
+    )
+    if placement is None:
+        raise SkillPlanningError("no_valid_placement")
+    action = _build_action(table, state, placement["x"], placement["y"])
+    return SkillPlan([action], ["MassageTable_requires_power"])
+
+
+def build_storage_area(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+) -> SkillPlan:
+    """Plan one unlocked StorageLocker on a supported floor."""
+    locker = _get_building(catalog, "StorageLocker")
+    if any(
+        entry.get("id") == "StorageLocker"
+        and entry.get("state") in {"built", "under_construction"}
+        for entry in _known_buildings(state)
+    ):
+        return SkillPlan([], [])
+    width, height = building_dimensions(locker)
+    rows, origin, center = _map_context(state)
+    placement = next(
+        (
+            candidate
+            for candidate in find_empty_rectangle_candidates(
+                rows, origin, width, height, center=center
+            )
+            if candidate["row"] + 1 < len(rows)
+            and all(
+                rows[candidate["row"] + 1][column] in {"#", "F", "X"}
+                for column in range(
+                    candidate["column"], candidate["column"] + width
+                )
+            )
+        ),
+        None,
+    )
+    if placement is None:
+        raise SkillPlanningError("no_valid_placement")
+    action = _build_action(locker, state, placement["x"], placement["y"])
+    return SkillPlan([action], [])
 
 
 def _dupe_position(dupe: Mapping[str, Any]) -> tuple[int, int] | None:
