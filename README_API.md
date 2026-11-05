@@ -681,11 +681,51 @@ separately confirmed from the installed game code.
 The `building_list` implementation adds optional `operational` to built
 entries when their `Operational` component is readable. It adds `powered`
 only when `Building.Def.RequiresPowerInput` is true and an
-`IEnergyConsumer` component is available. For built `MineralDeoxidizer`
-entries with a readable `Storage`, `stored` contains `{"Algae": <kg>}`;
-the value is summed from each matching item's `PrimaryElement.Mass`.
-Under-construction entries are unchanged. Each telemetry field has its own
-exception handler and warning, so a failed read omits that field rather than
-discarding the building entry. These values are included in the existing
-`building_list` cache refresh at approximately 10-second intervals; no
-additional sampling interval was added.
+`IEnergyConsumer` component is available. For any built entry with a readable
+`Storage`, `stored` is a list of element names and masses, aggregated from
+`Storage.items` using each item's `PrimaryElement.Element.tag.Name` and
+`PrimaryElement.Mass`. For example:
+
+```json
+{"stored":[{"element":"Algae","kg":12.5}]}
+```
+
+An empty but readable storage is serialized as an empty list. A building
+without a `Storage` component or with an unreadable storage omits `stored`.
+Under-construction entries are unchanged. Each telemetry field and each
+stored item has its own exception handling and warning, so a failed read
+omits only the affected field or item rather than discarding the building
+entry. These values are included in the existing `building_list` cache
+refresh at approximately 10-second intervals; no additional sampling
+interval was added.
+
+## Dupe room, assigned bed, and food consumption APIs
+
+Verified with `ilspycmd 8.2` against the installed
+`D:\Oxygen Not Included\OxygenNotIncluded_Data\Managed\Assembly-CSharp.dll`:
+
+- `Game.roomProber.GetRoomOfGameObject(GameObject)` resolves the room
+  containing a duplicant. `Room.roomType.Id` is the room type ID;
+  `Room.cavity.cells` supplies the actual room cells. The state reports
+  optional `room_type` and a representative `room_x`, `room_y`, chosen from
+  the valid cavity cell with lowest y and then lowest x. If no room or valid
+  cavity cell is available, the corresponding fields are omitted.
+- `StateMachineController.GetSMI<SleepChoreMonitor.Instance>()` returns the
+  dupe's sleep monitor instance. `SleepChoreMonitor` exposes the `bed`
+  `TargetParameter`; its `Get(smi)` value is the assigned `GameObject` passed
+  directly to the `SleepChore` constructor. The state can therefore report
+  `bed_id` as the assigned bed's cell index, with optional `bed_x` and
+  `bed_y` coordinates derived from `Grid.PosToCell` and `Grid.CellToXY`.
+  Missing monitor/target or an invalid cell omits these optional fields.
+- `RationTracker` inherits `WorldResourceAmountTracker<RationTracker>`.
+  `GetAmountConsumed()` sums `amountsConsumedByID`; that dictionary is
+  incremented by `RegisterAmountConsumed` and is not reset by
+  `WorldResourceAmountTracker.OnNewDay` (which only rolls `currentFrame`
+  into `previousFrame`). Consequently, the installed API does **not** verify
+  a per-cycle total for `food_consumption_kcal_per_cycle`; that field is
+  **CHƯA XÁC MINH** and is omitted rather than reporting a misleading value.
+
+All new game-object and component reads occur in the existing `Game.Update`
+postfix on the main thread. Room and assigned-bed values are optional
+per-dupe fields; an error for one field or dupe is logged and does not prevent
+serialization of other dupes or the separately cached `building_list`.
