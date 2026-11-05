@@ -677,3 +677,15 @@ consumption. This verifies the configured operating recipe, not actual
 throughput in a live colony. Other runtime constraints such as control
 settings or game-state effects should be treated as **cần kiểm chứng** unless
 separately confirmed from the installed game code.
+
+The `building_list` implementation adds optional `operational` to built
+entries when their `Operational` component is readable. It adds `powered`
+only when `Building.Def.RequiresPowerInput` is true and an
+`IEnergyConsumer` component is available. For built `MineralDeoxidizer`
+entries with a readable `Storage`, `stored` contains `{"Algae": <kg>}`;
+the value is summed from each matching item's `PrimaryElement.Mass`.
+Under-construction entries are unchanged. Each telemetry field has its own
+exception handler and warning, so a failed read omits that field rather than
+discarding the building entry. These values are included in the existing
+`building_list` cache refresh at approximately 10-second intervals; no
+additional sampling interval was added.

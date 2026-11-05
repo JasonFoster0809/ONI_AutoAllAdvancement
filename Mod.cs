@@ -2207,6 +2207,7 @@ namespace OniAgent
                     AppendNumberProperty(sb, ref hasProperty, "rel_x", entry.RelativeX);
                     AppendNumberProperty(sb, ref hasProperty, "rel_y", entry.RelativeY);
                 }
+                AppendOperationalStatus(sb, ref hasProperty, entry);
                 sb.Append("}");
             }
             sb.Append("]");
@@ -2251,7 +2252,8 @@ namespace OniAgent
                     Cell = cell,
                     Orientation = building.Orientation.ToString(),
                     State = state,
-                    Elements = GetBuildingElements(building)
+                    Elements = GetBuildingElements(building),
+                    CompletedBuilding = state == "built" ? building as BuildingComplete : null
                 };
                 if (hasTelepad)
                 {
@@ -2265,6 +2267,94 @@ namespace OniAgent
             {
                 Debug.LogWarning("[OniAgent] Could not read building details: " + e);
                 return null;
+            }
+        }
+
+        private static void AppendOperationalStatus(
+            StringBuilder sb, ref bool hasProperty, BuildingListEntry entry)
+        {
+            var building = entry.CompletedBuilding;
+            if (building == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var operational = building.GetComponent<Operational>();
+                if (operational != null)
+                {
+                    AppendPropertyPrefix(sb, ref hasProperty, "operational");
+                    sb.Append(operational.IsOperational ? "true" : "false");
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not read operational status for building " +
+                    entry.Id + ": " + e);
+            }
+
+            try
+            {
+                var definition = building.Def;
+                if (definition != null && definition.RequiresPowerInput)
+                {
+                    var energyConsumer = building.GetComponent<IEnergyConsumer>();
+                    if (energyConsumer != null)
+                    {
+                        AppendPropertyPrefix(sb, ref hasProperty, "powered");
+                        sb.Append(energyConsumer.IsPowered ? "true" : "false");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not read power status for building " +
+                    entry.Id + ": " + e);
+            }
+
+            if (entry.Id != "MineralDeoxidizer")
+            {
+                return;
+            }
+
+            try
+            {
+                var storage = building.GetComponent<Storage>();
+                if (storage == null)
+                {
+                    return;
+                }
+
+                var algaeTag = new Tag("Algae");
+                float algaeMassKg = 0f;
+                for (int i = 0; i < storage.items.Count; i++)
+                {
+                    var item = storage.items[i];
+                    if (item == null || !item.HasTag(algaeTag))
+                    {
+                        continue;
+                    }
+
+                    var primaryElement = item.GetComponent<PrimaryElement>();
+                    if (primaryElement == null)
+                    {
+                        throw new InvalidOperationException(
+                            "Stored Algae has no PrimaryElement component.");
+                    }
+                    algaeMassKg += primaryElement.Mass;
+                }
+
+                AppendPropertyPrefix(sb, ref hasProperty, "stored");
+                sb.Append("{");
+                bool hasStoredProperty = false;
+                AppendNumberProperty(sb, ref hasStoredProperty, "Algae", algaeMassKg);
+                sb.Append("}");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not read stored materials for building " +
+                    entry.Id + ": " + e);
             }
         }
 
@@ -2780,6 +2870,7 @@ namespace OniAgent
         public string Orientation;
         public List<string> Elements;
         public string State;
+        public BuildingComplete CompletedBuilding;
         public bool HasRelativePosition;
         public int RelativeX;
         public int RelativeY;
