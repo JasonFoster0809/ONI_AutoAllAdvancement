@@ -5,7 +5,7 @@
   "oxygen_air": 900,
   "environment": {"temperature_avg_k": 295, "oxygen_avg_g": 850},
   "alerts": [],
-  "rooms": [{"type": "Barracks"}],
+  "rooms": [{"type": "Barracks", "size": 20, "x": -2, "y": 3}],
   "building_list": [],
   "world": {
     "start": {"x": 0, "y": 0},

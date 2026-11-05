@@ -52,6 +52,12 @@ def test_done_and_pending_goals_are_skipped():
     done_step = next_step(done_state, load_catalog(), CONFIG, {})
     assert done_step["goal_id"] == "no_goal"
     assert {"goal_id": "barracks", "reason": "already_done"} in done_step["skipped"]
+    assert done_state["rooms"][0] == {
+        "type": "Barracks",
+        "size": 20,
+        "x": -2,
+        "y": 3,
+    }
 
     pending_state = load_fixture("goal_barracks_unbuilt.json")
     pending = load_fixture("goal_pending_build.json")["pending"]
