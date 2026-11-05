@@ -3,75 +3,89 @@
 ```text
 Oxygen Not Included
   Game.Update postfix (main thread)
-    ├─ poll oni_commands.json on an unscaled-time cadence
-    ├─ validate and execute each action independently
-    ├─ atomically publish oni_results.json
-    ├─ publish oni_state.json (about every 2 seconds)
-    ├─ refresh building_list / rooms / research / schedule state caches (about every 10 seconds)
-    └─ respond to oni_export.flag by writing blueprint.json
+    ├─ read state and process oni_commands.json
+    ├─ atomically publish oni_state.json / oni_results.json
+    ├─ refresh building, room, research, schedule, and material snapshots
+    ├─ queue BuildingComplete.OnSpawn and MinionIdentity.OnDied event refs
+    └─ drain event refs on Game.Update and append oni_events.jsonl
 
 Files in the ONI user data directory
-  oni_state.json ────────────────┐
-  oni_catalog.json ──────────────┤
-  oni_commands.json ◄────────────┤ Python agent
-  oni_results.json ─────────────►│
-  oni_export.flag / blueprint.json┘
+  oni_state.json / oni_catalog.json ───► Python agent
+  oni_commands.json ◄────────────────── Python agent
+  oni_results.json / oni_events.jsonl
 
 Python agent
-  read state and check its modification time
-    → load agent/config.json and update pending build-order acknowledgements
-    → apply deterministic emergency rules first
-    → if no emergency: planner walks research_target, then barracks
-    → skip completed, pending, unconfigurable, or already-present objectives
-    → if multiple plans share the best rank, Ollama may choose only a supplied goal ID
-    → otherwise execute the first eligible plan deterministically
-    → send one command per goal, track accepted build actions until state acknowledgement / expiry
-    → append decision, skipped reasons, pending state, and result to JSON Lines log
+  read state, catalog, and pending acknowledgements
+    → detect deterministic emergencies before any manager call
+    → optional Gemini manager returns allow-listed goal IDs (5–10 cycle horizon)
+    → evaluate priority rules with unknown-aware state conditions
+    → execute the selected rule skill, or fall back to the ordered goal planner
+    → optional local Qwen tie-breaker selects only a supplied goal candidate
+    → preserve --dry-run or send the selected action batch
+    → track pending actions, cycle cooldowns, reasons, and results in JSONL
 ```
 
-The mod processes game reads and actions on the game's main thread. Its
-polling and state-writing cadence uses Unity `Time.unscaledTime`, so the hook
-continues servicing files while the game is paused. Results are published
-through a temporary file and rename/replace to avoid exposing a partial JSON
-document.
+The mod processes game state and command actions from the `Game.Update`
+Harmony postfix. Building completion and duplicant death patches enqueue
+object references only; the update postfix reads their details and writes the
+event journal on the game thread. State output is approximately every two
+seconds; building, room, research, schedule, and material caches are
+approximately ten seconds. The event journal is bounded at 5 MiB and retains
+one rotated `.1` backup.
 
-The Python package does not use a game process or a third-party service. The
-Ollama client targets only `http://localhost:11434/api/generate`; a malformed,
-timed-out, or out-of-list answer becomes a safe no-op. `--dry-run` prevents
-command-file writes. Offline fixtures and tests exercise the Python modules
-without launching ONI or Ollama.
+## Python decision flow
+
+- Oxygen, food, stress, and temperature emergency detection remains
+  deterministic and runs before Gemini or Qwen. Oxygen/food repairs use the
+  existing configured actions; temperature is warning-only.
+- `--manager gemini` sends a compact state summary and the registered goal
+  IDs/descriptions to the Gemini `generateContent` endpoint. Only schema-valid,
+  allow-listed goal IDs are accepted; the plan is cached until its cycle
+  horizon expires. The API key is read from `GEMINI_API_KEY`, sent in a
+  request header, and never logged. Free-tier limits are **TODO_VERIFY**.
+- The priority rule engine evaluates facts with three-valued unknown
+  semantics, bounded read history, pending actions, and cycle cooldowns. It
+  passes the real catalog to the selected skill and caps rule-generated
+  actions at 12 per turn. Its validated phase metadata labels cycles 0–9 as
+  `early`, 10–29 as `growth`, and 30–99 as `midgame`; the phase is reported,
+  not used to filter planner goals.
+- If no rule selects a skill, the existing planner executes the highest-ranked
+  enabled goal. `--manager qwen` retains the local Ollama tie-break behavior;
+  `--manager none` disables both optional goal managers. The default remains
+  `qwen` for compatibility.
+- Skills are planning-only and use catalog IDs, unlock flags, construction
+  masses, and `resources.materials`. They do not send commands directly.
+  Implemented plans include oxygen setup, a tiled Latrine footprint, a
+  DiningTable mess area, a ManualGenerator/Wire/Battery layout, and the
+  existing Barracks and research planners.
+- `--dry-run` prints and logs proposed actions without writing command files.
+
+The Gemini manager receives only `cycle`, dupe count, local oxygen average,
+food calories, and the allow-listed goal descriptions. It does not receive
+dupe names, the map, building lists, or action payloads. The Qwen chooser
+remains local at `http://localhost:11434/api/generate`.
 
 ## Important boundaries
 
-- The agent does not infer prefab IDs. Building IDs are supplied from
-  `oni_catalog.json` by command-line configuration.
-- Skill functions return action plans and never send them directly.
-- The C# state caches `rooms` from `Game.Instance.roomProber.rooms` for about
-  10 seconds. The Barracks goal is done when a room entry has
-  `type: "Barracks"`; without a valid rooms block, completion is unknown.
-- The Barracks planner uses the catalog's Bed, Door, and Tile dimensions,
-  builds a closed tile perimeter with a Door opening, targets 12-64 interior
-  cells, and checks cumulative material mass before returning actions.
-  Existing Tile pieces are reused; other occupied perimeter cells invalidate
-  that candidate. It returns no plan if the Door cannot fit within the Bed
-  height, construction mass is unavailable, or materials are insufficient.
-- `build_bedroom` remains the separate simple bed-and-door planner and does
-  not construct an enclosure.
-- Configure prefab IDs in `agent/config.json`; no building prefab ID is
-  hardcoded in planner logic. `goal_ranks` can give goals the same rank to
-  enable LLM tie selection; default goal order gives research higher
-  priority than barracks.
-- Pending build acknowledgements live in agent process memory. Accepted
-  orders are cleared when every planned building appears in `building_list`,
-  or logged and expired after `pending_steps` iterations. Existing matching
-  buildings are never re-issued by the planner.
-- The mod exports cached `resources.materials` stock. Barracks planning
-  depends on that inventory and catalog `mass_kg`; missing inventory returns
-  `material_inventory_unavailable`, and missing construction mass is reported
-  rather than guessed.
-- Emergency rules run before the planner. The current loop does not configure
-  emergency repair actions, so a detected emergency selects no-op and blocks
-  both planner and LLM.
-- C# changes have build validation only; they have not been tested in a live
-  game. Python behavior has offline tests only; the live file/game and Ollama
-  integration has not been exercised.
+- Building and material IDs come from `oni_catalog.json`; no prefab ID is
+  inferred. An unavailable or locked building and insufficient inventory
+  result in a skipped plan rather than an invented fallback.
+- MineralDeoxidizer logic reads its actual `building_list[].stored` data. The
+  code-configured `0.55 kg/s` Algae rate and `1.8 kg` pressure threshold are
+  not used as automation constants; observed throughput remains
+  **TODO_VERIFY**.
+- `build_toilet_room` constructs its enclosure in batches of no more than 12
+  tiles and requires an unlocked Outhouse, WashBasin, Door, and Tile. It warns
+  that Dirt delivery is needed; it does not claim that material is already
+  inside the Outhouse.
+- `build_power_basic` lays out catalog-verified generator, wire, and battery
+  footprints. Its runtime circuit behavior is **CHƯA TEST TRONG GAME**.
+- Rule pending/cooldown state is kept in agent memory for the current process.
+  The existing planner's pending build acknowledgements remain separate.
+- The `Game.Update`, `BuildingComplete.OnSpawn`, and
+  `MinionIdentity.OnDied` event hooks were verified with `ilspycmd` against
+  the installed assembly. Their C# implementation is build-validated only:
+  **CHƯA TEST TRONG GAME**.
+- No command action, deployment, game launch, save modification, or game DLL
+  copy is part of these changes. Offline tests do not replace in-game
+  validation.

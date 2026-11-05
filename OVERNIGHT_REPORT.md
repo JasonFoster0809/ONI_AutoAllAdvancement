@@ -714,3 +714,66 @@ Commits riêng theo bước, không push:
 
 C# mới **CHƯA test thật trong game**. Không chạy game, deploy hoặc copy
 DLL; không push. Không có lỗi cùng loại lặp ba lần.
+
+## Overnight run — rule engine, skills, events, and goal managers
+
+Thời gian của code step theo timestamp commit; hàng tài liệu ghi thời điểm
+hoàn tất cập nhật, múi giờ `+07:00`. Mỗi code step được commit riêng trên
+`overnight-1`; không push. Các bước Python không cần
+`dotnet build`; sau bước C# đã chạy build. Xác minh cuối cùng sau toàn bộ
+thay đổi: `python -m pytest -q` — **105 passed**; `dotnet build
+OniAgent.csproj --no-restore` — **Build succeeded, 0 Warning(s), 0
+Error(s)**.
+
+| Thời gian | Trạng thái | Việc và kết quả kiểm thử | Commit |
+|---|---|---|---|
+| 2026-11-05 23:46:42 | XONG | Tạo rule engine có `--validate`, `--explain`, điều kiện unknown-aware, ưu tiên, pending/cooldown và giới hạn 12 action/lượt; phase metadata 0–10/10–30/30–100 được kiểm tra và báo cáo nhưng không lọc goal planner. Pytest cuối: **105 passed**; C# không đổi. | `1c9cfbb` |
+| 2026-11-05 23:47:51 | XONG | Bổ sung ignore cho `.env`, file key và save; xác minh bằng `git check-ignore`. Pytest cuối: **105 passed**; C# không đổi. | `46f0ba1` |
+| 2026-11-05 23:49:07 | XONG | Dùng `room_type`, tọa độ giường và `building_list[].stored` trong luật; state cũ/thiếu dữ liệu giữ trạng thái unknown. Pytest cuối: **105 passed**; C# không đổi. | `5cd8e9b` |
+| 2026-11-05 23:54:06 | XONG | Thêm skill xây oxy, Latrine, khu ăn và nguồn điện theo catalog, unlock và kho; plan thiếu vật liệu thì không gửi build. Pytest cuối: **105 passed**; C# không đổi. | `aedebc5` |
+| 2026-11-05 23:57:04 | XONG | Thêm event journal: xây xong, dupe chết, stress vượt ngưỡng, chore đổi; hook đã kiểm bằng `ilspycmd`, xử lý game/file trên `Game.Update`, xoay file khi quá 5 MiB. Build: **0 warnings, 0 errors**; pytest cuối: **105 passed**. C# mới **CHƯA TEST TRONG GAME**. | `15c3f81` |
+| 2026-11-06 00:00:32 | XONG | Thêm Gemini JSON-schema manager và `--mock`; dùng `GEMINI_API_KEY`, không log key; quota miễn phí **TODO_VERIFY**. Pytest cuối: **105 passed**; C# không đổi. | `e7ddadb` |
+| 2026-11-06 00:08:21 | XONG | Nối `--manager {none,qwen,gemini}`; emergency chạy trước manager, giữ Qwen mặc định và `--dry-run`. Pytest cuối: **105 passed**; C# không đổi. | `ec7dc6a` |
+| 2026-11-06 00:14:48 | XONG | Đồng bộ README/API, architecture, roadmap và playbook; thêm kết quả xác minh Latrine, caveat throughput và kiểm tra cuối. Pytest: **105 passed**; build: **0 warnings, 0 errors**; `git diff --check` sạch. Hash commit tài liệu sẽ được ghi trong commit hoàn tất báo cáo. | Đang chờ commit |
+
+### Quyết định an toàn và phần bỏ qua
+
+- Không thêm hằng số Algae tiêu thụ vào luật. Dùng `stored` trong state;
+  khi thiếu dữ liệu kho thì không suy ra máy rỗng. Mức cấu hình `0.55 kg/s`
+  và số đo thực tế người dùng báo `0.08–0.22 kg/s` còn mâu thuẫn,
+  throughput thực tế **TODO_VERIFY**.
+- Oxygen: nếu đã có MineralDeoxidizer mà kho không có Algae thì chỉ cảnh báo;
+  không bịa lệnh giao Algae. Food dùng hành vi ưu tiên hiện có, không xây
+  công trình thức ăn khi thiếu công trình đã unlock. Stress hạ ưu tiên
+  Dig/Build và lập plan bổ sung Bed/Outhouse/WashBasin; nhiệt chỉ cảnh báo.
+- `build_toilet_room` chia footprint thành các batch nhỏ. Code game xác nhận
+  Latrine cần ToiletType, WashStation, không có industrial machinery và
+  12–64 ô; Outhouse cần 200 kg Dirt để refill, WashBasin yêu cầu Water.
+  Việc phòng thực sự được công nhận và việc giao vật liệu cần kiểm tra trong
+  game.
+- Không đọc được mức tiêu thụ thức ăn theo cycle một cách đáng tin cậy nên
+  không thêm `food_consumption_kcal_per_cycle`. Gemini free-tier quota cũng
+  để **TODO_VERIFY**.
+- State thật có tại thời điểm dry-run nhưng đã cũ **1805.3 giây** (ngưỡng
+  cho phép 10 giây), vì vậy kết quả chỉ là kiểm tra cú pháp luồng dry-run,
+  không phải khuyến nghị điều khiển colony hiện tại. Kế hoạch đã in:
+  cycle `5`, `3` dupes, oxygen average `721.8`, food `22125.5 kcal`,
+  mục tiêu `research_target`, chọn bởi `planner`, action `set_research`,
+  không có action bị skip. Luật oxy báo unknown trên snapshot này.
+
+### Lệnh xác minh và ranh giới
+
+```powershell
+python -m pytest -q
+dotnet build OniAgent.csproj --no-restore
+git diff --check
+```
+
+Dry-run được gọi với `--dry-run --max-steps 1 --manager none` trên
+`oni_state.json` và `oni_catalog.json` thật; log được chuyển vào thư mục tạm
+để không ghi đè hay thêm log vào repo. Chưa chạy game hoặc deployment, không
+copy DLL, không sửa save, không push. C# mới **CHƯA TEST TRONG GAME**; các
+kiểm thử game cần người dùng làm trong colony thử nghiệm: xác nhận event
+hook/order và rotation, nhận diện Latrine, giao Dirt/Water, power circuit,
+Algae throughput, và hành vi action/build thực tế. Không có cùng một lỗi lặp
+lại ba lần.

@@ -678,6 +678,13 @@ throughput in a live colony. Other runtime constraints such as control
 settings or game-state effects should be treated as **cần kiểm chứng** unless
 separately confirmed from the installed game code.
 
+**TODO_VERIFY — live throughput:** the user reports measured Algae loss of
+approximately 0.08–0.22 kg/s, which conflicts with the configured 0.55 kg/s
+rate. The discrepancy is unresolved. The 0.55/0.5 values above are code
+configuration only; Python rules and skills must not use them as consumption
+or production constants. They inspect `building_list[].stored` and otherwise
+report unknown/empty storage conservatively.
+
 The `building_list` implementation adds optional `operational` to built
 entries when their `Operational` component is readable. It adds `powered`
 only when `Building.Def.RequiresPowerInput` is true and an
@@ -733,3 +740,113 @@ These are optional per-dupe fields; an error for one field or dupe is logged
 and does not prevent serialization of other dupes or the separately cached
 `building_list`. The agent's Algae warning reader accepts both this `stored`
 list and the older mapping-shaped state.
+
+## MineralDeoxidizer
+
+Verified with `ilspycmd 8.2` against the installed
+`D:\Oxygen Not Included\OxygenNotIncluded_Data\Managed\Assembly-CSharp.dll`.
+
+### Configured recipe and power
+
+`MineralDeoxidizerConfig.ConfigureBuildingTemplate` configures one active
+`ElementConverter.ConsumedElement` for Algae at `0.55f` kg/s and one
+`ElementConverter.OutputElement` for Oxygen at `0.5f` kg/s. The building
+definition sets `RequiresPowerInput = true` and
+`EnergyConsumptionWhenActive = 120f` (120 W). These are configured rates and
+power requirements from the game code, not a live measurement.
+
+### Output pressure lockout
+
+The output pressure check is implemented by `Electrolyzer`, which
+`MineralDeoxidizerConfig.ConfigureBuildingTemplate` attaches and configures:
+
+```csharp
+electrolyzer.maxMass = 1.8f;
+electrolyzer.emissionOffset = new CellOffset(0, 1);
+```
+
+In `Electrolyzer.RoomForPressure`, the game starts at the emission cell and
+calls:
+
+```csharp
+FloodFill.Any(overPressure, cell, new FloodFill.MaxDepth(3),
+    stop_at_solid: true, stop_at_liquid: true)
+```
+
+`Electrolyzer`'s `overPressure` predicate is `Grid.Mass[cell] > maxMass`.
+`FloodFill.MaxDepth.Check` is `cellDepth < value`; traversal checks depth 0,
+1, and 2 (the emission cell and up to two cardinal cell steps), and does not
+traverse through solid or liquid cells. Thus a checked cell causes lockout
+only when its mass is **strictly greater than 1.8 kg**; exactly 1.8 does not
+satisfy the predicate. This is an `Electrolyzer.RoomForPressure` test, not a
+generic output-blocking threshold implemented by `ElementConverter`.
+
+In `Electrolyzer.States.InitializeStates`, `converting` transitions to
+`overpressure` when `!RoomForPressure`; entering `overpressure` calls
+`operational.SetActive(false)`. It returns to `converting` when
+`RoomForPressure` becomes true. In `MineralDeoxidizerConfig`, the emission
+offset is `(0, 1)`, so the tested origin is one cell above the building.
+
+### Minimum Algae to start
+
+`Electrolyzer.States.InitializeStates` transitions from `waiting` to
+`converting` on `GameHashes.OnStorageChange` only when
+`ElementConverter.HasEnoughMassToStartConverting()` returns true. That method
+sums stored `PrimaryElement.Mass` for each active consumed tag and requires:
+
+```csharp
+storedMass >= MassConsumptionRate * (1f * GetSpeedMultiplier())
+```
+
+For Algae, `MassConsumptionRate` is `0.55f` kg/s. `GetSpeedMultiplier()`
+returns `machinerySpeedAttribute.GetTotalValue() * workSpeedMultiplier`;
+`workSpeedMultiplier` defaults to `1f`. Therefore when the effective speed
+multiplier is 1, at least **0.55 kg Algae** is needed to start converting.
+This start threshold scales with the effective machinery speed; the code has
+no separate fixed minimum-Algae constant. While converting,
+`Electrolyzer.States` uses `ElementConverter.CanConvertAtAll()`, which checks
+that a positive mass of each active consumed element remains, rather than
+reapplying the start threshold.
+
+The decompiled `1.8f` pressure threshold and `0.55f` start calculation are
+code-level facts, not agent control thresholds. Given the reported live
+consumption discrepancy, actual throughput and runtime start behavior remain
+**TODO_VERIFY**. No agent rule relies on these configured values.
+
+## Overnight event journal API
+
+Verified with `ilspycmd 8.2` against the installed
+`D:\Oxygen Not Included\OxygenNotIncluded_Data\Managed\Assembly-CSharp.dll`:
+
+- `Game.Update` is the game update method patched by the mod. Its postfix
+  performs game reads and event-file writes on the main thread.
+- `BuildingComplete.OnSpawn()` is the completion lifecycle hook used to queue
+  a building-completed event. The queued object is inspected later by the
+  `Game.Update` postfix.
+- `MinionIdentity.OnDied(object)` is the verified death callback. The patch
+  only queues its object reference; the `Game.Update` postfix reads the dupe
+  name and writes the event.
+- Chore changes are sampled from the already-used
+  `ChoreDriver.GetCurrentChore()` and `Chore.GetReportName()` APIs. Stress is
+  sampled from `Db.Get().Amounts.Stress.Lookup(dupe).value`; a threshold
+  event is emitted when a dupe crosses the existing 90-point threshold.
+
+The journal is written to
+`%USERPROFILE%\Documents\Klei\OxygenNotIncluded\oni_events.jsonl`, one JSON
+object per line with `cycle`, `time`, `type`, and `data`. Event types are
+`building_completed`, `dupe_died`, `dupe_stress_threshold`, and
+`chore_changed`. Chore events include nullable `from`/`to` values. Building
+and death callbacks enqueue references only; event data is read on the main
+thread. Stress and chore snapshots are sampled every two seconds using the
+existing `Time.unscaledTime` cadence. Events queued during initial load are
+discarded at the first update to avoid treating loaded buildings as new
+completions.
+
+Before an append would grow the file beyond 5 MiB, the previous journal is
+rotated to `oni_events.jsonl.1` (replacing the prior single backup). Each
+event is isolated by its own exception handler; a failed event write logs a
+warning and does not interrupt state serialization.
+
+**CHƯA TEST TRONG GAME:** these new C# event hooks, event ordering, thread
+behavior, file rotation, and event contents have only been build-validated.
+No live game was launched.

@@ -155,3 +155,42 @@ must remain conservative until its per-building storage field is present.
 - Construction validation of the generated Barracks, especially if the
   configured Door is taller than the Bed or a perimeter tile is already
   under construction.
+
+## Implemented skill plans (offline only)
+
+- `build_oxygen_setup` uses an unlocked `MineralDeoxidizer`, catalog mass,
+  available `resources.materials`, and a supported clear map footprint. It
+  does not add a second machine when one is already present. If an existing
+  machine's `stored` data is readable and Algae is empty, the plan warns that
+  Algae delivery is needed; if storage is missing or unreadable, it reports
+  unknown rather than assuming zero. The configured 0.55 kg/s rate is not
+  used as a rule constant. The user-reported 0.08–0.22 kg/s live loss remains
+  **TODO_VERIFY** against the decompiled configuration.
+- Food emergencies use the existing `Farming`, `Cook`, and `Ranching` dupe
+  priority actions. `build_mess_area` places the catalog's `DiningTable`; it
+  is not a food-production or food-delivery skill.
+- The high-stress emergency lowers `Dig`/`Build` priorities and plans catalog
+  shortages of `Bed`, `Outhouse`, and `WashBasin`. Temperature remains a
+  warning only. All material-consuming build actions use actual catalog
+  masses and current `resources.materials`.
+- `build_toilet_room` plans a six-by-three-cell interior with Tile perimeter
+  and a Door opening, then adds `Outhouse` and `WashBasin` in a later batch.
+  The decompiled `Database.RoomTypes.Latrine` constraints require a toilet,
+  wash station, no industrial machinery, and 12–64 room cells; 18 interior
+  cells satisfy the size bound. `OuthouseConfig` tags the building as
+  `ToiletType` and requests 200 kg Dirt for a refill. `WashBasinConfig` tags
+  it as `WashStation` and requests Water. These code facts do not prove that
+  the room will be recognized or usable after construction in a live colony.
+- `build_power_basic` lays out one unlocked `ManualGenerator`, a contiguous
+  Wire row, and one unlocked `Battery`, after checking material stock. Its
+  circuit connection and operation are **CHƯA TEST TRONG GAME**.
+- Rule-generated batches are capped at 12 actions. The existing Barracks
+  planner's behavior is unchanged; its multi-step layout can exceed that cap.
+- `--manager gemini` receives only a compact state summary and the predefined
+  goal list. Its response is restricted to allow-listed IDs and a 5–10 cycle
+  horizon. `GEMINI_API_KEY` is environment-only; free-tier quota is
+  **TODO_VERIFY**. Emergency detection stays ahead of any manager.
+
+All new build plans and event logging are offline/build validated only. Do
+not rely on room recognition, circuit power, delivery timing, or event
+ordering until they are tested in a disposable colony.

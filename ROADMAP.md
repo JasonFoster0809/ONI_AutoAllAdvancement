@@ -2,59 +2,64 @@
 
 ## 1. Colony state and telemetry
 
-**Status: implemented and build-validated; waiting for in-game verification.**
+**Status: implemented and build-validated; in-game verification remains open.**
 
 State includes duplicants, resources, map, buildings, research, schedules,
-rooms, achievements, environment, power, and simple alerts. Remaining work
-is to compare these readings with a running colony and check their cost and
-correctness across game updates.
+rooms, achievements, environment, power, and alerts. Built buildings may
+include operational/powered state and stored element masses. Duplicant room
+and assigned-bed fields are optional. These additions share the existing
+approximately ten-second building-list cache.
 
-Built entries may also include optional operational state, power state, and
-Mineral Deoxidizer stored Algae mass. These fields are covered by offline
-fixtures and tests; live C# telemetry verification remains open.
+The JSONL event journal records building completion, duplicant death, stress
+threshold crossings, and chore changes. Its `Game.Update`, `BuildingComplete`,
+and `MinionIdentity` hooks were checked with ILSpy; journal integration,
+rotation, and event ordering still need testing in a disposable colony.
 
 ## 2. Safe game commands
 
-**Status: implemented and build-validated; waiting for in-game verification.**
+**Status: existing actions preserved; live verification remains open.**
 
-The file command channel supports the documented dig/build/research,
-cancellation, priority, schedule, and per-dupe job-priority actions, plus the
-building catalog and blueprint export flag. Validate each action in a copied
-test colony before relying on automation. No action has been tested in-game
-as part of this work.
+The file command channel supports the previously tested dig/build/research,
+cancellation, priority, schedule, and per-dupe job-priority actions, plus
+catalog and blueprint export. This overnight work does not change those
+action implementations. Validate new skill plans in a copied test colony
+before relying on automation; no game was launched for this work.
 
 ## 3. Python decision agent
 
-**Status: goal planner and offline tests complete; live integration waiting.**
+**Status: implemented with offline coverage; live integration remains open.**
 
-The client, map helpers, catalog handling, skill planners, deterministic
-rules, constrained local Ollama chooser, ordered `research_target` / `barracks`
-goal planner, pending build tracking, CLI loop, and JSON Lines logging are
-implemented. Remaining work:
+- `agent/rule_engine.py` validates rules, handles missing data as unknown,
+  selects the highest-priority matching rule, records reasons, and applies
+  read history, pending, cycle cooldown, and a 12-action rule limit.
+  Validated phase metadata reports cycles 0–9 as `early`, 10–29 as `growth`,
+  and 30–99 as `midgame`; it does not currently filter planner goals.
+- `agent/skills.py` includes catalog- and inventory-aware plans for oxygen
+  setup, an enclosed Latrine footprint, a DiningTable mess area, a basic
+  ManualGenerator/Wire/Battery layout, and existing Barracks/research plans.
+  Insufficient materials or unavailable catalog data do not produce build
+  actions.
+- Existing deterministic emergency logic stays ahead of optional managers.
+  Food actions reuse the existing priority behavior; temperature remains
+  warning-only. The empty-Algae rule reads stored material telemetry instead
+  of calculating a burn-rate estimate.
+- `agent/gemini_manager.py` accepts only schema-valid, allow-listed goal IDs
+  for 5–10 cycle horizons and has an offline `--mock` mode. The agent supports
+  `--manager {none,qwen,gemini}`; Qwen remains the default tie-breaker.
+- Gemini uses `GEMINI_API_KEY` from the environment, sends a minimal state
+  summary and predefined goals, and does not log the key. Current free-tier
+  quotas are **TODO_VERIFY**.
 
-- Populate `agent/config.json` with prefab IDs copied from `oni_catalog.json`.
-- The user reports that the Barracks planned by the agent was built and
-  recognized by ONI in a real colony between cycles 3 and 4. Other room
-  snapshots and file-exchange edge cases still need validation in a disposable
-  colony.
-- Decide which safe actions should address oxygen, food, stress, and
-  temperature emergencies; currently the hard rules stop at no-op.
-- Verify the selected Ollama model and local endpoint on the user's machine.
-- Test file exchange and action results with ONI running; offline tests are
-  not a substitute for game integration.
-- Check the configured Door dimensions against the Bed height; the planner
-  safely rejects a Door that cannot fit in the requested room height.
+Remaining work is to test generated build layouts, storage status, event
+logging, power connections, and file exchange in a disposable live colony.
+The user-reported MineralDeoxidizer Algae use of approximately 0.08–0.22 kg/s
+conflicts with the decompiled 0.55 kg/s configured rate; the actual runtime
+throughput remains **TODO_VERIFY** and is not an agent constant.
 
-The command client now retries transient result-file locks/partial JSON until
-the command's existing timeout. The initiating failure was the mod briefly
-locking `oni_results.json` while publishing the result; retries never rewrite
-or resend the already-published command.
+## 4. Validation and safety
 
-## 4. Validation, safety, and documentation
-
-**Status: offline tests and documentation complete; live validation open.**
-
-`python -m pytest -q` currently passes 54 offline tests. `dotnet build`
-passes with 0 warnings and 0 errors. The C# mod and Python file exchange have
-not been tested in the game, and no deployment, DLL copy, or live command
-test was performed. Re-run the API verification and build after game updates.
+Python coverage currently passes offline, and `dotnet build` validates the
+C# source against the installed game assemblies. Neither result substitutes
+for an in-game test. The C# event journal is explicitly **CHƯA TEST TRONG
+GAME**. No game launch, deployment, save modification, game DLL copy, or push
+is part of this work.
