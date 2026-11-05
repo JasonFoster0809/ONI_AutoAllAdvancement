@@ -1503,6 +1503,25 @@ namespace OniAgent
                             bool hasCategoryProperty = false;
                             AppendStringProperty(entryBuilder, ref hasCategoryProperty, "category",
                                 materialCategories[categoryIndex]);
+                            try
+                            {
+                                var constructionMass = definition.Mass;
+                                if (constructionMass != null &&
+                                    categoryIndex < constructionMass.Length &&
+                                    !float.IsNaN(constructionMass[categoryIndex]) &&
+                                    !float.IsInfinity(constructionMass[categoryIndex]) &&
+                                    constructionMass[categoryIndex] >= 0f &&
+                                    constructionMass[categoryIndex] <= int.MaxValue)
+                                {
+                                    AppendNumberProperty(entryBuilder, ref hasCategoryProperty, "mass_kg",
+                                        (int)constructionMass[categoryIndex]);
+                                }
+                            }
+                            catch (Exception e)
+                            {
+                                Debug.LogWarning("[OniAgent] Could not read construction mass for " +
+                                    prefabId + " category " + materialCategories[categoryIndex] + ": " + e);
+                            }
                             AppendPropertyPrefix(entryBuilder, ref hasCategoryProperty, "options");
                             entryBuilder.Append("[");
 

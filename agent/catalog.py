@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from .oni_client import get_data_dir
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class CatalogError(ValueError):
@@ -62,13 +66,13 @@ def choose_materials(building: Mapping[str, Any], state: Mapping[str, Any]) -> l
         raise CatalogError("material_inventory_unavailable")
 
     stock_by_name = {
-        name.casefold(): name
+        name.casefold(): (name, amount)
         for name, amount in stock.items()
         if isinstance(name, str)
         and not isinstance(amount, bool)
         and isinstance(amount, (int, float))
         and math.isfinite(amount)
-        and amount > 0
+        and amount >= 0
     }
 
     selected: list[str] = []
@@ -76,10 +80,32 @@ def choose_materials(building: Mapping[str, Any], state: Mapping[str, Any]) -> l
         options = category.get("options")
         if not isinstance(options, list) or any(not isinstance(option, str) for option in options):
             raise CatalogError("invalid_material_options")
-        choice = next(
-            (stock_by_name[option.casefold()] for option in options if option.casefold() in stock_by_name),
-            None,
-        )
+        has_required_mass = "mass_kg" in category
+        required_mass = category.get("mass_kg")
+        if not has_required_mass:
+            LOGGER.warning(
+                "Catalog material category %r has no mass_kg; using positive-stock fallback",
+                category.get("category"),
+            )
+        if has_required_mass and (
+            isinstance(required_mass, bool)
+            or not isinstance(required_mass, (int, float))
+            or not math.isfinite(required_mass)
+            or required_mass < 0
+        ):
+            raise CatalogError("invalid_material_mass")
+
+        choice = None
+        for option in options:
+            stock_item = stock_by_name.get(option.casefold())
+            if stock_item is None:
+                continue
+            state_name, amount = stock_item
+            if (not has_required_mass and amount > 0) or (
+                has_required_mass and amount >= required_mass
+            ):
+                choice = state_name
+                break
         if choice is None:
             raise CatalogError("insufficient_material")
         selected.append(choice)

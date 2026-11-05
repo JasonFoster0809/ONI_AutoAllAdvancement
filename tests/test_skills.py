@@ -70,7 +70,9 @@ def test_build_skills_include_materials_selected_from_state():
             "id": "Research",
             "width": 1,
             "height": 1,
-            "materials": [{"category": "Rock", "options": ["SandStone"]}],
+            "materials": [
+                {"category": "Rock", "options": ["SandStone"], "mass_kg": 50}
+            ],
             "unlocked": True,
         }
     ]

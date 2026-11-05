@@ -403,6 +403,14 @@ the field and retain the category/options entry. The catalog field names
 `category` and `options` preserve the existing `MaterialCategory` and
 `MaterialSelector.GetValidMaterials` output.
 
+`agent.catalog.choose_materials` compares each candidate option's inventory
+amount with that category's `mass_kg` and chooses only options meeting or
+exceeding the requirement. It matches case-insensitively and returns the
+inventory key's original casing. An older catalog without `mass_kg` logs a
+warning and uses the prior positive-stock behavior. A present but invalid
+`mass_kg` is rejected as `invalid_material_mass`; no available option with
+enough stock yields `insufficient_material`.
+
 ## Material inventory API
 
 Verified against the installed

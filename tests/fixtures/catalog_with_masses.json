@@ -1,0 +1,14 @@
+{
+  "materials": [
+    {
+      "category": "Metal",
+      "options": ["Cuprite", "sandstone"],
+      "mass_kg": 1200
+    },
+    {
+      "category": "Organic",
+      "options": ["Dirt", "Algae"],
+      "mass_kg": 250.5
+    }
+  ]
+}

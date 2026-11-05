@@ -1,0 +1,8 @@
+{
+  "materials": [
+    {
+      "category": "Metal",
+      "options": ["Cuprite", "sandstone"]
+    }
+  ]
+}

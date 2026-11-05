@@ -204,7 +204,7 @@ tiếp thành công với 0 warning, 0 error.
 
 ### Phần 2 — Python `catalog.choose_materials`
 
-**XONG — `python -m pytest -q`: 28 passed; `dotnet build`: thành công, 0
+**XONG — `python -m pytest -q`: 29 passed; `dotnet build`: thành công, 0
 warning, 0 error.** Hàm chọn option của từng category chỉ khi tag tồn kho có
 lượng dương và hữu hạn; so khớp tên không phân biệt hoa thường nhưng action
 giữ đúng casing của key trong state. Thiếu `resources.materials` trả
@@ -245,6 +245,33 @@ cảnh báo active-world vs related-world được ghi trong `README_API.md`.
 
 ### Phần 2 — Trường `mass_kg` và chọn kho theo chi phí
 
-**CHƯA THỰC HIỆN.** Chỉ sau khi hoàn tất xác minh và build của Phần 1 mới thêm
-`mass_kg` vào catalog và áp dụng ngưỡng theo category trong Python. Test/pytest
-sẽ được ghi bổ sung sau khi triển khai.
+**XONG — `python -m pytest -q`: 28 passed; `dotnet build`: thành công, 0
+warning, 0 error.** Action `list_buildings` thêm `mass_kg` theo index từ
+`(int)BuildingDef.Mass[i]`; nếu không có phần tử/giá trị hợp lệ, chỉ bỏ field
+khỏi category đó. Mỗi category độc lập được bảo vệ bằng `try/catch`.
+`choose_materials` chỉ chọn option có stock lớn hơn hoặc bằng `mass_kg`.
+Catalog cũ thiếu field sẽ log warning và dùng lại cách cũ (stock dương).
+Kho thiếu số lượng cần thiết trả `insufficient_material`; state không có
+`resources.materials` vẫn trả `material_inventory_unavailable`.
+
+Đã thêm fixture `catalog_with_masses.json`,
+`catalog_without_masses.json`, và test cho đủ/thiếu lượng, fallback catalog
+cũ, đồng thời xác nhận build skill gửi phần tử vào `elements`. Kết quả kiểm
+thử cuối: `python -m pytest -q` — **29 passed**; `dotnet build` — **Build
+succeeded, 0 Warning(s), 0 Error(s)**.
+
+Cú pháp `list_buildings` hiện có:
+
+```json
+{"id":"catalog-mass-001","actions":[{"type":"list_buildings"}]}
+```
+
+Sau khi catalog chứa `mass_kg`, build action có thể gửi vật liệu đáp ứng
+chi phí:
+
+```json
+{"id":"mass-build-001","actions":[{"type":"build","id":"<catalog-prefab-id>","x":20,"y":10,"orientation":"Neutral","elements":["SandStone"],"priority":5}]}
+```
+
+Kết quả C# mới **CHƯA được test thật trong game**. Không deploy, không copy
+DLL và không chạy ONI. Phần 1 và Phần 2 được commit riêng; không push.
