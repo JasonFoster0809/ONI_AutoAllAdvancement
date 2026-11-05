@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -28,6 +29,7 @@ namespace OniAgent
         static float nextResultWrite = 0f;
         static float nextBlueprintExportCheck = 0f;
         static float nextBuildingListUpdate = 0f;
+        static float nextDupeEventCheck = 0f;
         static float nextRoomsUpdate = 0f;
         static float nextResearchUpdate = 0f;
         static float nextScheduleUpdate = 0f;
@@ -46,6 +48,16 @@ namespace OniAgent
         static string lastProcessedCommandId = string.Empty;
         static AgentCommand pendingCommand;
         static readonly Queue<AgentCommandResult> pendingResults = new Queue<AgentCommandResult>();
+        static readonly ConcurrentQueue<BuildingComplete> completedBuildingEvents =
+            new ConcurrentQueue<BuildingComplete>();
+        static readonly ConcurrentQueue<MinionIdentity> deadDupeEvents =
+            new ConcurrentQueue<MinionIdentity>();
+        static readonly Dictionary<string, float> previousDupeStress =
+            new Dictionary<string, float>(StringComparer.Ordinal);
+        static readonly Dictionary<string, string> previousDupeChores =
+            new Dictionary<string, string>(StringComparer.Ordinal);
+        static bool eventJournalInitialized;
+        static int cachedDupeEventWorldId = int.MinValue;
         static readonly string OutPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "Klei", "OxygenNotIncluded", "oni_state.json");
@@ -67,12 +79,26 @@ namespace OniAgent
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "Klei", "OxygenNotIncluded", "oni_catalog.json");
         static readonly string CatalogTempPath = CatalogPath + ".tmp";
+        static readonly string EventPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            "Klei", "OxygenNotIncluded", "oni_events.jsonl");
+        static readonly string EventBackupPath = EventPath + ".1";
 
         public static void Postfix()
         {
             PollCommandFile();
             ProcessPendingCommand();
             WritePendingResults();
+            if (!eventJournalInitialized)
+            {
+                DiscardInitialGameEvents();
+                eventJournalInitialized = true;
+            }
+            else
+            {
+                DrainGameEvents();
+                ObserveDupeEvents();
+            }
 
             var sb = new StringBuilder();
             sb.Append("{");
@@ -610,6 +636,272 @@ namespace OniAgent
             catch (Exception e)
             {
                 Debug.LogError("[OniAgent] Could not check write interval: " + e);
+            }
+        }
+
+        internal static void QueueCompletedBuilding(BuildingComplete building)
+        {
+            completedBuildingEvents.Enqueue(building);
+        }
+
+        internal static void QueueDeadDupe(MinionIdentity dupe)
+        {
+            deadDupeEvents.Enqueue(dupe);
+        }
+
+        private static void DiscardInitialGameEvents()
+        {
+            BuildingComplete completed;
+            while (completedBuildingEvents.TryDequeue(out completed))
+            {
+            }
+
+            MinionIdentity deadDupe;
+            while (deadDupeEvents.TryDequeue(out deadDupe))
+            {
+            }
+        }
+
+        private static void DrainGameEvents()
+        {
+            BuildingComplete building;
+            while (completedBuildingEvents.TryDequeue(out building))
+            {
+                try
+                {
+                    if (building == null || building.Def == null)
+                    {
+                        continue;
+                    }
+
+                    int cell = building.GetBottomLeftCell();
+                    int x;
+                    int y;
+                    Grid.CellToXY(cell, out x, out y);
+                    var data = new StringBuilder();
+                    data.Append("{");
+                    bool hasProperty = false;
+                    AppendStringProperty(data, ref hasProperty, "building", building.Def.PrefabID);
+                    AppendNumberProperty(data, ref hasProperty, "x", x);
+                    AppendNumberProperty(data, ref hasProperty, "y", y);
+                    data.Append("}");
+                    AppendEventLine("building_completed", data.ToString());
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("[OniAgent] Could not record building completion: " + e);
+                }
+            }
+
+            MinionIdentity dupe;
+            while (deadDupeEvents.TryDequeue(out dupe))
+            {
+                try
+                {
+                    if (dupe == null)
+                    {
+                        continue;
+                    }
+
+                    var data = new StringBuilder();
+                    data.Append("{");
+                    bool hasProperty = false;
+                    AppendStringProperty(data, ref hasProperty, "dupe", dupe.name);
+                    data.Append("}");
+                    AppendEventLine("dupe_died", data.ToString());
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("[OniAgent] Could not record dupe death: " + e);
+                }
+            }
+        }
+
+        private static void ObserveDupeEvents()
+        {
+            if (Time.unscaledTime < nextDupeEventCheck)
+            {
+                return;
+            }
+
+            nextDupeEventCheck = Time.unscaledTime + 2f;
+            try
+            {
+                var activeWorld = ClusterManager.Instance.activeWorld;
+                int worldId = activeWorld != null ? activeWorld.id : int.MinValue;
+                if (worldId != cachedDupeEventWorldId)
+                {
+                    previousDupeStress.Clear();
+                    previousDupeChores.Clear();
+                    cachedDupeEventWorldId = worldId;
+                }
+
+                var dupes = Components.LiveMinionIdentities.Items;
+                var observedNames = new HashSet<string>(StringComparer.Ordinal);
+                for (int i = 0; i < dupes.Count; i++)
+                {
+                    try
+                    {
+                        var dupe = dupes[i];
+                        if (dupe == null)
+                        {
+                            continue;
+                        }
+
+                        string name;
+                        try
+                        {
+                            name = dupe.name;
+                            if (string.IsNullOrEmpty(name))
+                            {
+                                continue;
+                            }
+                            observedNames.Add(name);
+                        }
+                        catch (Exception e)
+                        {
+                            Debug.LogWarning("[OniAgent] Could not identify dupe for event tracking: " + e);
+                            continue;
+                        }
+
+                        try
+                        {
+                            float stress = Db.Get().Amounts.Stress.Lookup(dupe).value;
+                            float previousStress;
+                            if (previousDupeStress.TryGetValue(name, out previousStress) &&
+                                previousStress < 90f && stress >= 90f)
+                            {
+                                var data = new StringBuilder();
+                                data.Append("{");
+                                bool hasProperty = false;
+                                AppendStringProperty(data, ref hasProperty, "dupe", name);
+                                AppendNumberProperty(data, ref hasProperty, "stress", stress);
+                                data.Append("}");
+                                AppendEventLine("dupe_stress_threshold", data.ToString());
+                            }
+                            previousDupeStress[name] = stress;
+                        }
+                        catch (Exception e)
+                        {
+                            Debug.LogWarning("[OniAgent] Could not observe dupe stress event: " + e);
+                        }
+
+                        try
+                        {
+                            string choreName = null;
+                            var choreDriver = dupe.GetComponent<ChoreDriver>();
+                            if (choreDriver != null)
+                            {
+                                var chore = choreDriver.GetCurrentChore();
+                                if (chore != null)
+                                {
+                                    choreName = chore.GetReportName();
+                                }
+                            }
+
+                            string previousChore;
+                            if (previousDupeChores.TryGetValue(name, out previousChore) &&
+                                !string.Equals(previousChore, choreName, StringComparison.Ordinal))
+                            {
+                                var data = new StringBuilder();
+                                data.Append("{");
+                                bool hasProperty = false;
+                                AppendStringProperty(data, ref hasProperty, "dupe", name);
+                                AppendPropertyPrefix(data, ref hasProperty, "from");
+                                if (previousChore == null)
+                                {
+                                    data.Append("null");
+                                }
+                                else
+                                {
+                                    data.Append("\"").Append(EscapeJsonString(previousChore)).Append("\"");
+                                }
+                                AppendPropertyPrefix(data, ref hasProperty, "to");
+                                if (choreName == null)
+                                {
+                                    data.Append("null");
+                                }
+                                else
+                                {
+                                    data.Append("\"").Append(EscapeJsonString(choreName)).Append("\"");
+                                }
+                                data.Append("}");
+                                AppendEventLine("chore_changed", data.ToString());
+                            }
+                            previousDupeChores[name] = choreName;
+                        }
+                        catch (Exception e)
+                        {
+                            Debug.LogWarning("[OniAgent] Could not observe dupe chore event: " + e);
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning("[OniAgent] Could not observe dupe events at index " + i + ": " + e);
+                    }
+                }
+
+                var staleNames = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var name in previousDupeStress.Keys)
+                {
+                    if (!observedNames.Contains(name))
+                    {
+                        staleNames.Add(name);
+                    }
+                }
+                foreach (var name in previousDupeChores.Keys)
+                {
+                    if (!observedNames.Contains(name))
+                    {
+                        staleNames.Add(name);
+                    }
+                }
+                foreach (var name in staleNames)
+                {
+                    previousDupeStress.Remove(name);
+                    previousDupeChores.Remove(name);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not observe dupe events: " + e);
+            }
+        }
+
+        private static void AppendEventLine(string eventType, string dataJson)
+        {
+            try
+            {
+                var line = new StringBuilder();
+                line.Append("{");
+                bool hasProperty = false;
+                AppendNumberProperty(line, ref hasProperty, "cycle", GameClock.Instance.GetCycle());
+                AppendNumberProperty(line, ref hasProperty, "time",
+                    GameClock.Instance.GetTimeSinceStartOfCycle());
+                AppendStringProperty(line, ref hasProperty, "type", eventType);
+                AppendPropertyPrefix(line, ref hasProperty, "data");
+                line.Append(dataJson).Append("}").Append(Environment.NewLine);
+                string eventLine = line.ToString();
+
+                Directory.CreateDirectory(Path.GetDirectoryName(EventPath));
+                long maxBytes = 5L * 1024L * 1024L;
+                long currentBytes = File.Exists(EventPath) ? new FileInfo(EventPath).Length : 0L;
+                if (currentBytes + Encoding.UTF8.GetByteCount(eventLine) > maxBytes)
+                {
+                    if (File.Exists(EventBackupPath))
+                    {
+                        File.Delete(EventBackupPath);
+                    }
+                    if (File.Exists(EventPath))
+                    {
+                        File.Move(EventPath, EventBackupPath);
+                    }
+                }
+                File.AppendAllText(EventPath, eventLine, new UTF8Encoding(false));
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not append event journal line: " + e);
             }
         }
 
@@ -3206,6 +3498,24 @@ namespace OniAgent
             }
 
             return escaped.ToString();
+        }
+    }
+
+    [HarmonyPatch(typeof(BuildingComplete), "OnSpawn")]
+    internal static class BuildingComplete_OnSpawn_EventPatch
+    {
+        private static void Postfix(BuildingComplete __instance)
+        {
+            Game_Update_Patch.QueueCompletedBuilding(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(MinionIdentity), "OnDied")]
+    internal static class MinionIdentity_OnDied_EventPatch
+    {
+        private static void Postfix(MinionIdentity __instance)
+        {
+            Game_Update_Patch.QueueDeadDupe(__instance);
         }
     }
 
