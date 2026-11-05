@@ -320,3 +320,45 @@ Action example:
 
 Supported results are `ok`, `unknown_dupe`, `unknown_group`,
 `invalid_priority`, `unavailable`, or `error`.
+
+## Python agent
+
+The offline Python package is under `agent/`. `oni_client.py` reads
+`oni_state.json`, warns if its modification time is older than 10 seconds,
+writes one command with a unique ID, and waits for a matching result. The data
+directory can be set with `ONI_DATA_DIR`; otherwise it uses
+`%USERPROFILE%\Documents\Klei\OxygenNotIncluded`.
+
+`maputils.py` treats `world.map` as top-to-bottom rows and `world.origin` as
+the lower-left coordinate. Building pivot conventions match the mod:
+three-cell widths use the middle cell and two-cell widths use the left cell;
+the y coordinate is the bottom row. `catalog.py` uses only prefab IDs and
+material options from `oni_catalog.json`.
+
+The current state does not contain `resources.materials`. Therefore,
+`catalog.choose_materials` returns `material_inventory_unavailable` for a
+building that requires material categories unless a caller supplies that
+field. Skill planners return action lists without sending them. The bedroom
+planner places a bed and door in a clear supported footprint; it does not
+build or verify room walls.
+
+`rules.py` uses conservative automation heuristics, not game danger
+thresholds: oxygen below 50 g per sampled cell, less than 100 kcal on a dupe,
+stress at least 90, or an environment average outside 273.15-318.15 K triggers
+an emergency decision. A matching configured candidate can be selected;
+otherwise the decision is no-op and the LLM is skipped. `llm_chooser.py`
+contacts only the local Ollama endpoint at
+`http://localhost:11434/api/generate`, with model `qwen2.5-coder:3b` and
+temperature zero. Its returned ID must match a supplied candidate; failures
+fall back to no-op.
+
+Run one offline/dry-run step with:
+
+```powershell
+python -m agent.agent_main --dry-run --max-steps 1
+```
+
+For build skills, pass prefab IDs copied from `oni_catalog.json`, for example
+`--research-center-id <id>` or both `--bed-id <id> --door-id <id>`. A corridor
+can be supplied as `--corridor x1,y1,x2,y2`. The agent writes JSON Lines logs
+to `logs/agent.jsonl`.

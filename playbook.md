@@ -50,6 +50,27 @@ they depend on traits, building configuration, or game version.
   configuration, and duplicant traits; treat approximate values as estimates
   and mark uncertain details **cần kiểm chứng**.
 
+## Reading the mod snapshot and agent heuristics
+
+- `environment.temperature_avg_k`, `oxygen_avg_g`, and `co2_avg_g` are
+  averages over the sampled 11x11 area around the telepad. `oxygen_air` is
+  instead an average oxygen-gas mass in grams per valid cell in the 11x11
+  area around the first duplicant. These values describe local samples, not
+  colony-wide totals.
+- The mod's simple alerts are generated at zero dupe calories and stress at
+  least 90 on its 0-100 stress scale. Zero calories is a narrow alert, not a
+  verified game hunger threshold.
+- The offline Python agent currently treats oxygen below 50 g per sampled
+  cell, dupe calories below 100 kcal, stress at least 90, or average
+  temperature outside 273.15-318.15 K as emergency heuristics. These are
+  agent policy thresholds, not verified ONI danger limits; **cần kiểm chứng**
+  against a live colony before enabling automatic commands.
+- `resources.materials` is not present in the current mod state. Do not expect
+  the Python material chooser to select construction elements until an
+  inventory field is added or supplied by another trusted source.
+- The Python bedroom planner currently places a bed and a door; it does not
+  guarantee that the surrounding tiles form an enclosed room.
+
 ## Cần kiểm chứng
 
 - Exact oxygen and calorie consumption for each duplicant, since traits and
