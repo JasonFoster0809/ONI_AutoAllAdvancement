@@ -707,6 +707,19 @@ These values are included in the existing `building_list` cache
 refresh at approximately 10-second intervals; no additional sampling
 interval was added.
 
+The installed assembly's `Operational.Flags` is a
+`Dictionary<Operational.Flag, bool>`; each flag has `Name` and `FlagType`
+fields. The building state now additionally emits optional
+`operational_flags: [{"name": "...", "satisfied": true}]`, sorted by flag name.
+This reports each raw requirement/functional flag value separately from the
+aggregate `operational` boolean. If the component or any flag cannot be read,
+only `operational_flags` is omitted; the building and other fields remain.
+This field uses the same building-list refresh and main-thread read path.
+
+**CHƯA TEST TRONG GAME:** the new `operational_flags` serialization is only
+verified against the installed API and by `dotnet build`; live flag names,
+values, and JSON output remain to be checked in a disposable colony.
+
 ## Dupe room, assigned bed, and food consumption APIs
 
 Verified with `ilspycmd 8.2` against the installed

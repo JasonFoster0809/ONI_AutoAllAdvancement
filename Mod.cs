@@ -2814,6 +2814,7 @@ namespace OniAgent
                     AppendNumberProperty(sb, ref hasProperty, "rel_y", entry.RelativeY);
                 }
                 AppendOperationalStatus(sb, ref hasProperty, entry);
+                AppendOperationalFlags(sb, ref hasProperty, entry);
                 sb.Append("}");
             }
             sb.Append("]");
@@ -3000,6 +3001,60 @@ namespace OniAgent
             catch (Exception e)
             {
                 Debug.LogWarning("[OniAgent] Could not read stored materials for building " +
+                    entry.Id + ": " + e);
+            }
+        }
+
+        private static void AppendOperationalFlags(
+            StringBuilder sb, ref bool hasProperty, BuildingListEntry entry)
+        {
+            var building = entry.CompletedBuilding;
+            if (building == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var operational = building.GetComponent<Operational>();
+                if (operational == null || operational.Flags == null)
+                {
+                    return;
+                }
+
+                var flags = new List<KeyValuePair<string, bool>>();
+                foreach (var flag in operational.Flags)
+                {
+                    if (flag.Key == null || string.IsNullOrEmpty(flag.Key.Name))
+                    {
+                        throw new InvalidOperationException(
+                            "Operational flag name is unavailable.");
+                    }
+                    flags.Add(new KeyValuePair<string, bool>(flag.Key.Name, flag.Value));
+                }
+                flags.Sort((left, right) =>
+                    StringComparer.Ordinal.Compare(left.Key, right.Key));
+
+                AppendPropertyPrefix(sb, ref hasProperty, "operational_flags");
+                sb.Append("[");
+                for (int i = 0; i < flags.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        sb.Append(",");
+                    }
+                    sb.Append("{");
+                    bool hasFlagProperty = false;
+                    AppendStringProperty(sb, ref hasFlagProperty, "name", flags[i].Key);
+                    AppendPropertyPrefix(sb, ref hasFlagProperty, "satisfied");
+                    sb.Append(flags[i].Value ? "true" : "false");
+                    sb.Append("}");
+                }
+                sb.Append("]");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not read operational flags for building " +
                     entry.Id + ": " + e);
             }
         }
