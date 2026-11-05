@@ -1,0 +1,36 @@
+{
+  "phases": [
+    {"id": "early", "start_cycle": 0, "end_cycle": 10, "goals": ["oxygen", "food", "shelter"]},
+    {"id": "growth", "start_cycle": 10, "end_cycle": 30, "goals": ["food", "power", "sanitation"]},
+    {"id": "midgame", "start_cycle": 30, "end_cycle": 100, "goals": ["power", "automation", "stability"]}
+  ],
+  "rules": [
+    {
+      "id": "low-oxygen-setup",
+      "priority": 100,
+      "when": {"op": "for", "reads": 3, "condition": {"op": "lt", "path": "environment.oxygen_avg_g", "value": 50}},
+      "then": {"skill": "build_oxygen_setup", "args": {}},
+      "cooldown_cycles": 2,
+      "pending": 2,
+      "requires": ["build_oxygen_setup"]
+    },
+    {
+      "id": "critical-dupe-hunger",
+      "priority": 95,
+      "when": {"op": "lt", "path": "dupes.0.calories_kcal", "value": 100},
+      "then": {"skill": "build_mess_area", "args": {}},
+      "cooldown_cycles": 1,
+      "pending": 1,
+      "requires": ["build_mess_area"]
+    },
+    {
+      "id": "high-stress",
+      "priority": 80,
+      "when": {"op": "gte", "path": "dupes.0.stress", "value": 90},
+      "then": {"skill": "build_toilet_room", "args": {}},
+      "cooldown_cycles": 2,
+      "pending": 2,
+      "requires": ["build_toilet_room"]
+    }
+  ]
+}
