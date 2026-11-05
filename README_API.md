@@ -345,6 +345,64 @@ guarantee that a building's full construction cost is covered. Skill planners
 return action lists without sending them. The bedroom planner places a bed and
 door in a clear supported footprint; it does not build or verify room walls.
 
+## Construction mass API
+
+Verified against the installed
+`D:\Oxygen Not Included\OxygenNotIncluded_Data\Managed\Assembly-CSharp.dll`
+by decompiling `BuildingDef`, `Recipe`, `Pickupable`, `PrimaryElement`, and
+`GameUtil` with `ilspycmd 8.2`:
+
+- `BuildingDef.MaterialCategory` is `string[]`; `BuildingDef.Mass` is
+  `float[]`. In `BuildingDef.PostProcess()`, the game loops from index zero to
+  `MaterialCategory.Length` and creates
+  `new Recipe.Ingredient(MaterialCategory[i], (int)Mass[i])`. Therefore the
+  construction mass for category `i` is aligned by the same array index:
+  `MaterialCategory[i]` ↔ `Mass[i]`. The value used for the construction
+  recipe is the integer truncation `(int)Mass[i]`, not a rounded value.
+- `BuildingDef.MaterialsAvailable(selected_elements, world)` calls
+  `CraftRecipe.GetAllIngredients(selected_elements)`; `Recipe.GetAllIngredients`
+  substitutes the selected material tag at the corresponding ingredient
+  index and preserves that ingredient's amount. The game then compares
+  `world.worldInventory.GetAmount(ingredient.tag, true)` against
+  `ingredient.amount`.
+- `Recipe.Ingredient.amount` is the required material quantity. The stock
+  amount path is `WorldInventory` → `Pickupable.TotalAmount` →
+  `PrimaryElement.Units`; `PrimaryElement.Mass` is
+  `Units * MassPerUnit`. `GameUtil.MassUnit` has `Kilograms` and `Pounds`
+  display modes and `GetFormattedMass` formats these quantities using the
+  configured mass unit. Construction categories in the catalog are solid
+  materials, for which the recipe amount is used as the game's construction
+  material mass. The construction requirement is therefore recorded in the
+  game's mass amount, conventionally kg; displayed unit formatting can
+  depend on the user's `GameUtil.massUnit` setting.
+- `BuildingDef.PostProcess()` is the source of the category-to-mass mapping;
+  `BuildingDef.MaterialsAvailable()` is the source of the material sufficiency
+  check. `MaterialsAvailable` passes `includeRelatedWorlds: true`, so its
+  live build check may count related-world inventory. The agent's
+  `resources.materials` snapshot uses `GetAmount(tag, false)` for the active
+  world only; a Python stock comparison can consequently be more
+  conservative than the game's build-tool check.
+
+The existing catalog shape has one object per category:
+
+```json
+{
+  "materials": [
+    {
+      "category": "Metal",
+      "options": ["Copper", "Gold"],
+      "mass_kg": 100
+    }
+  ]
+}
+```
+
+`mass_kg` should reflect the game's recipe amount `(int)BuildingDef.Mass[i]`.
+Only emit it when the index exists and the value can be read; otherwise omit
+the field and retain the category/options entry. The catalog field names
+`category` and `options` preserve the existing `MaterialCategory` and
+`MaterialSelector.GetValidMaterials` output.
+
 ## Material inventory API
 
 Verified against the installed

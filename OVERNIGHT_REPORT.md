@@ -225,3 +225,26 @@ Ví dụ action để kiểm tra thủ công (thay prefab ID bằng ID trong cat
 ```
 
 Hai phần đã được commit riêng; không push.
+
+## Bổ sung: Construction mass API
+
+### Phần 1 — Xác minh API
+
+**XONG — API xác minh được bằng `ilspycmd 8.2`; `dotnet build` sau bước tài
+liệu thành công.** `BuildingDef.MaterialCategory` và `BuildingDef.Mass` là
+các mảng song song theo index: `BuildingDef.PostProcess()` tạo từng
+`Recipe.Ingredient` bằng `MaterialCategory[i]` và `(int)Mass[i]`.
+`BuildingDef.MaterialsAvailable()` gọi `CraftRecipe.GetAllIngredients()`,
+thay tag đã chọn ở đúng index rồi so `ingredient.amount` với
+`WorldInventory.GetAmount`. `Recipe.Ingredient.amount` là lượng construction
+mass; cơ chế inventory đi qua `Pickupable.TotalAmount` và
+`PrimaryElement.Units`, còn `PrimaryElement.Mass = Units * MassPerUnit`.
+`GameUtil` có cấu hình hiển thị Kilograms/Pounds; catalog sẽ gọi trường
+`mass_kg` theo khối lượng construction chuẩn trong game. Chi tiết xác minh và
+cảnh báo active-world vs related-world được ghi trong `README_API.md`.
+
+### Phần 2 — Trường `mass_kg` và chọn kho theo chi phí
+
+**CHƯA THỰC HIỆN.** Chỉ sau khi hoàn tất xác minh và build của Phần 1 mới thêm
+`mass_kg` vào catalog và áp dụng ngưỡng theo category trong Python. Test/pytest
+sẽ được ghi bổ sung sau khi triển khai.
