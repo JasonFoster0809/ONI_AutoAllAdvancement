@@ -15,6 +15,67 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_ENDPOINT = "http://localhost:11434/api/generate"
 DEFAULT_MODEL = "qwen2.5-coder:3b"
 NO_OP = {"id": "no_op", "category": "no_op", "actions": []}
+_OMITTED_STATE_KEYS = frozenset({"map", "building_list", "research", "achievements"})
+
+
+def _sanitize_summary_value(value: Any) -> Any:
+    """Copy JSON-like summary values without including large/excluded sections."""
+    if isinstance(value, Mapping):
+        return {
+            key: _sanitize_summary_value(item)
+            for key, item in value.items()
+            if not isinstance(key, str) or key not in _OMITTED_STATE_KEYS
+        }
+    if isinstance(value, list):
+        return [_sanitize_summary_value(item) for item in value]
+    return value
+
+
+def _summarize_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract a compact set of colony facts for the LLM prompt."""
+    summary: dict[str, Any] = {}
+    try:
+        if "cycle" in state:
+            summary["cycle"] = _sanitize_summary_value(state["cycle"])
+    except Exception as error:
+        LOGGER.warning("Could not summarize cycle: %s", error)
+
+    try:
+        dupes = state.get("dupes")
+        if isinstance(dupes, list):
+            summary["dupe_count"] = len(dupes)
+    except Exception as error:
+        LOGGER.warning("Could not summarize dupe count: %s", error)
+
+    try:
+        if "oxygen_air" in state:
+            summary["oxygen_air"] = _sanitize_summary_value(state["oxygen_air"])
+    except Exception as error:
+        LOGGER.warning("Could not summarize oxygen_air: %s", error)
+
+    try:
+        resources = state.get("resources")
+        if isinstance(resources, Mapping) and "food_kcal" in resources:
+            summary["food_kcal"] = _sanitize_summary_value(resources["food_kcal"])
+    except Exception as error:
+        LOGGER.warning("Could not summarize food_kcal: %s", error)
+
+    try:
+        alerts = state.get("alerts")
+        if isinstance(alerts, list):
+            summary["alerts"] = _sanitize_summary_value(alerts[:10])
+    except Exception as error:
+        LOGGER.warning("Could not summarize alerts: %s", error)
+
+    for section in ("environment", "power"):
+        try:
+            value = state.get(section)
+            if isinstance(value, Mapping):
+                summary[section] = _sanitize_summary_value(value)
+        except Exception as error:
+            LOGGER.warning("Could not summarize %s: %s", section, error)
+
+    return summary
 
 
 def choose_action(
@@ -23,7 +84,7 @@ def choose_action(
     *,
     endpoint: str = DEFAULT_ENDPOINT,
     model: str = DEFAULT_MODEL,
-    timeout: float = 10.0,
+    timeout: float = 60.0,
 ) -> dict[str, Any]:
     """Ask Ollama to select one supplied candidate; failures return no-op."""
     candidate_by_id: dict[str, Mapping[str, Any]] = {}
@@ -46,7 +107,7 @@ def choose_action(
         return safe_no_op
 
     prompt_data = {
-        "state": state,
+        "state": _summarize_state(state),
         "candidates": [
             {"id": candidate_id, "category": candidate.get("category"), "actions": candidate["actions"]}
             for candidate_id, candidate in candidate_by_id.items()
@@ -59,7 +120,7 @@ def choose_action(
             "prompt": json.dumps(prompt_data, ensure_ascii=False),
             "format": "json",
             "stream": False,
-            "options": {"temperature": 0},
+            "options": {"temperature": 0, "num_predict": 40},
         },
         ensure_ascii=False,
     ).encode("utf-8")

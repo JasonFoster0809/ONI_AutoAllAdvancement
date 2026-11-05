@@ -1,7 +1,7 @@
 import json
 import socket
 
-from agent.llm_chooser import choose_action
+from agent.llm_chooser import _summarize_state, choose_action
 
 
 class MockResponse:
@@ -38,6 +38,42 @@ def test_llm_selects_only_supplied_candidate(monkeypatch):
     assert selected["id"] == "dig"
     assert captured["body"]["model"] == "qwen2.5-coder:3b"
     assert captured["body"]["options"]["temperature"] == 0
+    assert captured["body"]["options"]["num_predict"] == 40
+    prompt_data = json.loads(captured["body"]["prompt"])
+    assert prompt_data["state"] == {"cycle": 1}
+    assert captured["timeout"] == 60.0
+
+
+def test_summarize_state_omits_large_sections_and_limits_alerts():
+    state = {
+        "cycle": 42,
+        "dupes": [{"name": f"dupe-{index}"} for index in range(3)],
+        "oxygen_air": 123.5,
+        "resources": {"food_kcal": 4567, "materials": {"Sand": 100000}},
+        "alerts": [{"type": f"alert-{index}"} for index in range(12)],
+        "environment": {"temperature_avg_k": 295, "map": ["large"] * 1000},
+        "power": {"watts_used": 20},
+        "world": {"map": ["large"] * 10000},
+        "building_list": [{"id": "LargeBuildingList"}],
+        "research": {"techs": [{"id": "LargeResearchList"}]},
+        "achievements": [{"id": "LargeAchievementList"}],
+    }
+
+    summary = _summarize_state(state)
+    encoded = json.dumps(summary)
+
+    assert summary["cycle"] == 42
+    assert summary["dupe_count"] == 3
+    assert summary["oxygen_air"] == 123.5
+    assert summary["food_kcal"] == 4567
+    assert len(summary["alerts"]) == 10
+    assert summary["environment"] == {"temperature_avg_k": 295}
+    assert summary["power"] == {"watts_used": 20}
+    assert "map" not in encoded
+    assert "building_list" not in encoded
+    assert "research" not in encoded
+    assert "achievements" not in encoded
+    assert len(encoded) < 2000
 
 
 def test_invalid_json_and_unknown_id_fall_back_to_noop(monkeypatch):
