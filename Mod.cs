@@ -36,6 +36,7 @@ namespace OniAgent
         static int cachedRoomsWorldId = int.MinValue;
         static int cachedMaterialsWorldId = int.MinValue;
         static string cachedBuildingListJson = "[]";
+        static HashSet<int> cachedBuildingCells = new HashSet<int>();
         static string cachedRoomsJson;
         static string cachedMaterialsJson;
         static string cachedResearchJson;
@@ -1620,6 +1621,7 @@ namespace OniAgent
                 if (activeWorld == null)
                 {
                     cachedBuildingListJson = "[]";
+                    cachedBuildingCells = new HashSet<int>();
                     cachedBuildingWorldId = int.MinValue;
                     nextBuildingListUpdate = Time.unscaledTime + 10f;
                     return;
@@ -1638,6 +1640,7 @@ namespace OniAgent
             {
                 Debug.LogWarning("[OniAgent] Could not refresh building list: " + e);
                 cachedBuildingListJson = "[]";
+                cachedBuildingCells = new HashSet<int>();
                 cachedBuildingWorldId = activeWorld != null ? activeWorld.id : int.MinValue;
                 nextBuildingListUpdate = Time.unscaledTime + 10f;
             }
@@ -1668,7 +1671,8 @@ namespace OniAgent
                     throw new InvalidOperationException("RoomProber is unavailable.");
                 }
 
-                cachedRoomsJson = BuildRoomsJson(roomProber.rooms, activeWorld.id);
+                cachedRoomsJson = BuildRoomsJson(
+                    roomProber.rooms, activeWorld.id, cachedBuildingCells);
                 cachedRoomsWorldId = activeWorld.id;
             }
             catch (Exception e)
@@ -1679,7 +1683,8 @@ namespace OniAgent
             }
         }
 
-        private static string BuildRoomsJson(List<Room> rooms, int activeWorldId)
+        private static string BuildRoomsJson(
+            List<Room> rooms, int activeWorldId, HashSet<int> playerBuildingCells)
         {
             var sb = new StringBuilder("[");
             bool hasRoom = false;
@@ -1697,32 +1702,46 @@ namespace OniAgent
                         continue;
                     }
 
+                    bool isNeutral = string.Equals(
+                        roomType.Id, "Neutral", StringComparison.Ordinal);
+                    bool containsPlayerBuilding = false;
                     int representativeCell = -1;
+                    int representativeX = int.MaxValue;
+                    int representativeY = int.MaxValue;
                     for (int cellIndex = 0; cellIndex < cavity.cells.Count; cellIndex++)
                     {
                         int candidateCell = cavity.cells[cellIndex];
                         if (Grid.IsValidCellInWorld(candidateCell, activeWorldId))
                         {
-                            representativeCell = candidateCell;
-                            break;
+                            int candidateX;
+                            int candidateY;
+                            Grid.CellToXY(candidateCell, out candidateX, out candidateY);
+                            if (candidateY < representativeY ||
+                                (candidateY == representativeY && candidateX < representativeX))
+                            {
+                                representativeCell = candidateCell;
+                                representativeX = candidateX;
+                                representativeY = candidateY;
+                            }
+                            if (isNeutral && playerBuildingCells.Contains(candidateCell))
+                            {
+                                containsPlayerBuilding = true;
+                            }
                         }
                     }
 
-                    if (representativeCell < 0)
+                    if (representativeCell < 0 || (isNeutral && !containsPlayerBuilding))
                     {
                         continue;
                     }
 
-                    int x;
-                    int y;
-                    Grid.CellToXY(representativeCell, out x, out y);
                     var entry = new StringBuilder();
                     entry.Append("{");
                     bool hasProperty = false;
                     AppendStringProperty(entry, ref hasProperty, "type", roomType.Id);
                     AppendNumberProperty(entry, ref hasProperty, "size", cavity.NumCells);
-                    AppendNumberProperty(entry, ref hasProperty, "x", x);
-                    AppendNumberProperty(entry, ref hasProperty, "y", y);
+                    AppendNumberProperty(entry, ref hasProperty, "x", representativeX);
+                    AppendNumberProperty(entry, ref hasProperty, "y", representativeY);
                     entry.Append("}");
 
                     if (hasRoom)
@@ -2191,6 +2210,12 @@ namespace OniAgent
                 sb.Append("}");
             }
             sb.Append("]");
+            var buildingCells = new HashSet<int>();
+            for (int i = 0; i < entries.Count; i++)
+            {
+                buildingCells.Add(entries[i].Cell);
+            }
+            cachedBuildingCells = buildingCells;
             return sb.ToString();
         }
 

@@ -515,10 +515,19 @@ below are from the decompiled game sources:
   its primary and additional constraints; the prober assigns the result using
   `Db.Get().RoomTypes.GetRoomType(room)`.
 - `CavityInfo.NumCells` returns `cells == null ? 0 : cells.Count`;
-  `CavityInfo.cells` is a `List<int>` of grid cells, and `minX`, `minY`,
-  `maxX`, and `maxY` are also exposed. A representative coordinate can be
-  obtained from the first valid cell with `Grid.CellToXY(int, out int, out
-  int)`. This is a representative cell, not a guaranteed room center.
+  `CavityInfo.cells` is a `List<int>` of the actual cells visited by the
+  RoomProber flood fill. `RefreshModule.Visitor.VisitCell` assigns the cavity
+  handle to a visited cell and adds that cell to `cavityCells`; the builder
+  stores that list on `CavityInfo.cells`. Thus membership is checked by
+  comparing a grid-cell index against this list, not by using only the
+  `minX/minY/maxX/maxY` bounding rectangle (which could include cells outside
+  an irregular cavity).
+- A stable representative is the actual cavity cell with the smallest y,
+  then the smallest x. Convert every valid `cavity.cells` entry through
+  `Grid.CellToXY(int, out int, out int)` and compare coordinates. Do not rely
+  on the list's iteration order; the game does not guarantee that it is
+  sorted. This avoids reporting a different coordinate when the cavity's
+  internal cell ordering changes.
 - The database type is `Database.RoomTypes`; its `Barracks` field is
   initialized as `new RoomType("Barracks", ...)`. The constructor passes
   `RoomConstraints.HAS_BED` as the primary constraint and
@@ -528,6 +537,11 @@ below are from the decompiled game sources:
   building tagged `IndustrialMachinery`, and has `cavity.NumCells` from 12
   through 64 inclusive. This agrees with the user's tooltip for these
   constraints.
+- `Database.RoomTypes.GetRoomType(Room)` iterates non-Neutral room types and
+  returns the first unambiguous type whose `isSatisfactory(room)` result is
+  `all_satisfied`; if none qualifies, it returns `Neutral`. Thus the verified
+  implementation can report an oversized room as Neutral when its room type
+  constraints fail.
 - `RoomProber.IsCavityBoundary(int)` treats a cell as a boundary when its
   `Grid.BuildMasks` includes `Grid.BuildFlags.Solid` or `Foundation`; if
   neither is present, `Grid.HasDoor[cell]` decides the boundary. The
@@ -561,13 +575,25 @@ Recommended state representation:
 ```
 
 `type` is `room.roomType.Id`, `size` is `room.cavity.NumCells`, and `x,y`
-come from `Grid.CellToXY(room.cavity.cells[0], ...)`. Skip null or incomplete
-room/cavity entries. Collection cost is O(R), where R is
-`Game.Instance.roomProber.rooms.Count`; only one cell per room needs
-conversion, so it does not scan every grid cell. Cache the serialized array
-for approximately 10 seconds, as with `building_list`, rather than traversing
-the list on every approximately 2-second state write. This is an estimate
-from the iteration shape; no runtime profiling was performed.
+are the stable representative above. Skip null or incomplete room/cavity
+entries. Only non-`Neutral` room types are always included. For `Neutral`,
+the mod includes the room only if one or more cell indices in
+`room.cavity.cells` exactly match a `cell` from the cached `building_list`.
+That list is built from completed buildings and `BuildingUnderConstruction`
+objects and excludes the same Prop/POI/Gravitas prefab IDs as the existing
+building-list output. This preserves player-built areas that the game labels
+Neutral (including rooms whose size exceeds a type's constraints) while
+excluding natural/empty Neutral cavities without listed buildings. All
+non-Neutral types are retained regardless of whether a player building is
+found.
+
+The room collection pass is O(R + C), where R is the RoomProber room count
+and C is the sum of the cell counts for entries traversed; it converts each
+valid cavity cell once to determine the stable coordinate and Neutral
+membership. The building list is indexed by a `HashSet<int>` for expected
+constant-time matching. The scan is cached approximately every 10 seconds,
+not every approximately 2-second state write. This is an operation-count
+estimate; runtime cost was not profiled.
 
 The current C# state implementation emits the `rooms` property only when the
 RoomProber snapshot succeeds. It refreshes the serialized array approximately
@@ -575,4 +601,6 @@ every 10 seconds, keyed by active world ID; an unavailable prober or a
 refresh-level error omits the property. Individual invalid room entries are
 logged and skipped. The implementation uses `Game.Instance.roomProber.rooms`,
 `Room.roomType.Id`, `Room.cavity.NumCells`, `Room.cavity.cells`, and
-`Grid.CellToXY`.
+`Grid.CellToXY`. It derives the building-cell membership index from the same
+completed/construction entries used to serialize `building_list`; the JSON
+shape remains `type`, `size`, `x`, and `y`.
