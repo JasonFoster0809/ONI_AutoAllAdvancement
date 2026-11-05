@@ -66,6 +66,73 @@
       "cooldown_cycles": 2,
       "pending": 2,
       "requires": ["build_barracks"]
+    },
+    {
+      "id": "growth-water-setup",
+      "priority": 50,
+      "when": {
+        "op": "all",
+        "conditions": [
+          {"op": "gte", "path": "cycle", "value": 10},
+          {"op": "lt", "path": "cycle", "value": 30},
+          {"op": "any", "conditions": [
+            {"op": "count", "building": "LiquidPumpingStation", "comparison": "lt", "value": 1},
+            {"op": "count", "building": "WashBasin", "comparison": "lt", "value": 1}
+          ]}
+        ]
+      },
+      "then": {"skill": "build_water_setup", "args": {}},
+      "cooldown_cycles": 3,
+      "pending": 3,
+      "requires": ["build_water_setup"]
+    },
+    {
+      "id": "growth-food-basic",
+      "priority": 45,
+      "when": {
+        "op": "all",
+        "conditions": [
+          {"op": "gte", "path": "cycle", "value": 10},
+          {"op": "lt", "path": "cycle", "value": 30},
+          {"op": "count", "building": "PlanterBox", "comparison": "lt", "value": 1}
+        ]
+      },
+      "then": {"skill": "build_food_basic", "args": {}},
+      "cooldown_cycles": 3,
+      "pending": 3,
+      "requires": ["build_food_basic"]
+    },
+    {
+      "id": "midgame-recreation",
+      "priority": 35,
+      "when": {
+        "op": "all",
+        "conditions": [
+          {"op": "gte", "path": "cycle", "value": 30},
+          {"op": "lt", "path": "cycle", "value": 100},
+          {"op": "count", "building": "MassageTable", "comparison": "lt", "value": 1}
+        ]
+      },
+      "then": {"skill": "build_recreation", "args": {}},
+      "cooldown_cycles": 5,
+      "pending": 5,
+      "requires": ["build_recreation"]
+    },
+    {
+      "id": "midgame-storage-area",
+      "priority": 30,
+      "when": {
+        "op": "all",
+        "conditions": [
+          {"op": "gte", "path": "cycle", "value": 30},
+          {"op": "lt", "path": "cycle", "value": 100},
+          {"op": "count", "building": "StorageLocker", "comparison": "lt", "value": 1}
+        ]
+      },
+      "then": {"skill": "build_storage_area", "args": {}},
+      "cooldown_cycles": 5,
+      "pending": 5,
+      "requires": ["build_storage_area"]
     }
   ]
 }

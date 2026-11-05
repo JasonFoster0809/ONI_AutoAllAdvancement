@@ -44,6 +44,75 @@ def test_rules_file_has_requested_cycle_phases_and_validates():
     assert phase_for_cycle(rules, 100) is None
 
 
+def test_growth_and_midgame_rules_validate_and_select_their_catalog_skills():
+    rules = load_rules()
+    selected_rules = {
+        rule["id"]: rule
+        for rule in rules["rules"]
+        if rule["id"] in {
+            "growth-water-setup",
+            "growth-food-basic",
+            "midgame-recreation",
+            "midgame-storage-area",
+        }
+    }
+    assert set(selected_rules) == {
+        "growth-water-setup",
+        "growth-food-basic",
+        "midgame-recreation",
+        "midgame-storage-area",
+    }
+    assert all(
+        rule["when"]
+        and rule["then"]["skill"] in rule["requires"]
+        and rule["cooldown_cycles"] > 0
+        for rule in selected_rules.values()
+    )
+    assert main(["--validate"]) == 0
+
+    state = json.loads((FIXTURES / "empty_map.json").read_text(encoding="utf-8"))
+    state["cycle"] = 10
+    state["dupes"] = [{"name": "Fixture Dupe", "stress": 0}]
+    state["resources"] = {
+        "food_kcal": 50000,
+        "materials": {"SandStone": 2000, "ZincOre": 1000, "Dirt": 500},
+    }
+    state["environment"] = {"oxygen_avg_g": 500}
+    state["alerts"] = []
+    state["building_list"] = []
+    rows = state["world"]["map"]
+    rows[10] = rows[10][:20] + "L" + rows[10][21:]
+    rows[15] = "#" * 41
+    catalog = json.loads(
+        (FIXTURES / "basic_skills_catalog.json").read_text(encoding="utf-8")
+    )
+    executors = agent_main._rule_skill_executors(agent_main.DEFAULT_CONFIG)
+
+    growth = explain_rules(state, catalog=catalog, executors=executors)
+    assert growth["selected"]["rule_id"] == "growth-water-setup"
+    assert [action["id"] for action in growth["selected"]["actions"]] == [
+        "LiquidPumpingStation",
+        "WashBasin",
+    ]
+
+    state["cycle"] = 30
+    state["building_list"] = [
+        {"id": "LiquidPumpingStation", "state": "built", "x": 1, "y": 1},
+        {"id": "WashBasin", "state": "built", "x": 4, "y": 1},
+        {"id": "PlanterBox", "state": "built", "x": 6, "y": 1},
+    ]
+    midgame = explain_rules(state, catalog=catalog, executors=executors)
+    assert midgame["selected"]["rule_id"] == "midgame-recreation"
+    assert midgame["selected"]["actions"][0]["id"] == "MassageTable"
+
+    state["building_list"].append(
+        {"id": "MassageTable", "state": "built", "x": 8, "y": 1}
+    )
+    storage = explain_rules(state, catalog=catalog, executors=executors)
+    assert storage["selected"]["rule_id"] == "midgame-storage-area"
+    assert storage["selected"]["actions"][0]["id"] == "StorageLocker"
+
+
 def test_redacted_live_state_fixture_preserves_new_rule_fields():
     state = json.loads(
         (FIXTURES / "rule_engine_state_redacted.json").read_text(encoding="utf-8")
