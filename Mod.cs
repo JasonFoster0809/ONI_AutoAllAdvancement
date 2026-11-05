@@ -37,6 +37,8 @@ namespace OniAgent
         static int cachedMaterialsWorldId = int.MinValue;
         static string cachedBuildingListJson = "[]";
         static HashSet<int> cachedBuildingCells = new HashSet<int>();
+        static Dictionary<GameObject, DupeRoomStatus> cachedDupeRoomStatuses =
+            new Dictionary<GameObject, DupeRoomStatus>();
         static string cachedRoomsJson;
         static string cachedMaterialsJson;
         static string cachedResearchJson;
@@ -460,6 +462,15 @@ namespace OniAgent
                     catch (Exception e)
                     {
                         Debug.LogWarning("[OniAgent] Could not read dupe job priorities: " + e);
+                    }
+
+                    try
+                    {
+                        AppendCachedDupeRoomStatus(sb, ref hasDupeProperty, dupe);
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning("[OniAgent] Could not append dupe room status: " + e);
                     }
 
                     sb.Append("}");
@@ -1622,6 +1633,7 @@ namespace OniAgent
                 {
                     cachedBuildingListJson = "[]";
                     cachedBuildingCells = new HashSet<int>();
+                    cachedDupeRoomStatuses = new Dictionary<GameObject, DupeRoomStatus>();
                     cachedBuildingWorldId = int.MinValue;
                     nextBuildingListUpdate = Time.unscaledTime + 10f;
                     return;
@@ -1635,14 +1647,316 @@ namespace OniAgent
                 nextBuildingListUpdate = Time.unscaledTime + 10f;
                 cachedBuildingListJson = BuildBuildingListJson(activeWorld, hasTelepad, telepadX, telepadY);
                 cachedBuildingWorldId = activeWorld.id;
+                try
+                {
+                    cachedDupeRoomStatuses = BuildDupeRoomStatusCache();
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("[OniAgent] Could not refresh dupe room status cache: " + e);
+                    cachedDupeRoomStatuses = new Dictionary<GameObject, DupeRoomStatus>();
+                }
             }
             catch (Exception e)
             {
                 Debug.LogWarning("[OniAgent] Could not refresh building list: " + e);
                 cachedBuildingListJson = "[]";
                 cachedBuildingCells = new HashSet<int>();
+                cachedDupeRoomStatuses = new Dictionary<GameObject, DupeRoomStatus>();
                 cachedBuildingWorldId = activeWorld != null ? activeWorld.id : int.MinValue;
                 nextBuildingListUpdate = Time.unscaledTime + 10f;
+            }
+        }
+
+        private static Dictionary<GameObject, DupeRoomStatus> BuildDupeRoomStatusCache()
+        {
+            var statuses = new Dictionary<GameObject, DupeRoomStatus>();
+            var dupes = Components.LiveMinionIdentities.Items;
+            for (int i = 0; i < dupes.Count; i++)
+            {
+                MinionIdentity dupe = null;
+                try
+                {
+                    dupe = dupes[i];
+                    if (dupe == null || dupe.gameObject == null)
+                    {
+                        continue;
+                    }
+
+                    var status = new DupeRoomStatus();
+                    Room room = null;
+                    try
+                    {
+                        var game = Game.Instance;
+                        if (game != null && game.roomProber != null)
+                        {
+                            room = game.roomProber.GetRoomOfGameObject(dupe.gameObject);
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning("[OniAgent] Could not locate room for dupe " +
+                            i.ToString(CultureInfo.InvariantCulture) + ": " + e);
+                    }
+
+                    if (room != null)
+                    {
+                        try
+                        {
+                            if (room.roomType != null)
+                            {
+                                status.RoomType = room.roomType.Id;
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            Debug.LogWarning("[OniAgent] Could not read room type for dupe " +
+                                i.ToString(CultureInfo.InvariantCulture) + ": " + e);
+                        }
+
+                        int representativeX = 0;
+                        int representativeY = 0;
+                        bool hasRepresentativeCell = false;
+                        try
+                        {
+                            if (room.cavity == null || room.cavity.cells == null)
+                            {
+                                throw new InvalidOperationException("Room cavity cells are unavailable.");
+                            }
+
+                            int representativeCell = -1;
+                            int lowestX = int.MaxValue;
+                            int lowestY = int.MaxValue;
+                            for (int cellIndex = 0; cellIndex < room.cavity.cells.Count; cellIndex++)
+                            {
+                                int cell = room.cavity.cells[cellIndex];
+                                if (!Grid.IsWorldValidCell(cell))
+                                {
+                                    continue;
+                                }
+
+                                int x;
+                                int y;
+                                Grid.CellToXY(cell, out x, out y);
+                                if (y < lowestY || (y == lowestY && x < lowestX))
+                                {
+                                    representativeCell = cell;
+                                    lowestX = x;
+                                    lowestY = y;
+                                }
+                            }
+
+                            if (representativeCell < 0)
+                            {
+                                throw new InvalidOperationException("Room has no valid cavity cell.");
+                            }
+
+                            representativeX = lowestX;
+                            representativeY = lowestY;
+                            hasRepresentativeCell = true;
+                        }
+                        catch (Exception e)
+                        {
+                            Debug.LogWarning("[OniAgent] Could not read room coordinates for dupe " +
+                                i.ToString(CultureInfo.InvariantCulture) + ": " + e);
+                        }
+
+                        if (hasRepresentativeCell)
+                        {
+                            try
+                            {
+                                status.RoomX = representativeX;
+                            }
+                            catch (Exception e)
+                            {
+                                Debug.LogWarning("[OniAgent] Could not read room x for dupe " +
+                                    i.ToString(CultureInfo.InvariantCulture) + ": " + e);
+                            }
+
+                            try
+                            {
+                                status.RoomY = representativeY;
+                            }
+                            catch (Exception e)
+                            {
+                                Debug.LogWarning("[OniAgent] Could not read room y for dupe " +
+                                    i.ToString(CultureInfo.InvariantCulture) + ": " + e);
+                            }
+                        }
+                    }
+
+                    GameObject assignedBed = null;
+                    try
+                    {
+                        var controller = dupe.GetComponent<StateMachineController>();
+                        if (controller != null)
+                        {
+                            var sleepMonitor = controller.GetSMI<SleepChoreMonitor.Instance>();
+                            if (sleepMonitor != null && sleepMonitor.sm.bed != null)
+                            {
+                                assignedBed = sleepMonitor.sm.bed.Get(sleepMonitor);
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogWarning("[OniAgent] Could not read assigned bed for dupe " +
+                            i.ToString(CultureInfo.InvariantCulture) + ": " + e);
+                    }
+
+                    if (assignedBed != null)
+                    {
+                        int? bedCell = null;
+                        try
+                        {
+                            int cell = Grid.PosToCell(assignedBed);
+                            if (!Grid.IsWorldValidCell(cell))
+                            {
+                                throw new InvalidOperationException("Assigned bed has no valid world cell.");
+                            }
+                            bedCell = cell;
+                            status.BedId = cell;
+                        }
+                        catch (Exception e)
+                        {
+                            Debug.LogWarning("[OniAgent] Could not read assigned bed cell for dupe " +
+                                i.ToString(CultureInfo.InvariantCulture) + ": " + e);
+                        }
+
+                        if (bedCell.HasValue)
+                        {
+                            try
+                            {
+                                int x;
+                                int y;
+                                Grid.CellToXY(bedCell.Value, out x, out y);
+                                status.BedX = x;
+                            }
+                            catch (Exception e)
+                            {
+                                Debug.LogWarning("[OniAgent] Could not read assigned bed x for dupe " +
+                                    i.ToString(CultureInfo.InvariantCulture) + ": " + e);
+                            }
+
+                            try
+                            {
+                                int x;
+                                int y;
+                                Grid.CellToXY(bedCell.Value, out x, out y);
+                                status.BedY = y;
+                            }
+                            catch (Exception e)
+                            {
+                                Debug.LogWarning("[OniAgent] Could not read assigned bed y for dupe " +
+                                    i.ToString(CultureInfo.InvariantCulture) + ": " + e);
+                            }
+                        }
+                    }
+
+                    if (status.RoomType != null || status.RoomX.HasValue || status.RoomY.HasValue ||
+                        status.BedId.HasValue || status.BedX.HasValue || status.BedY.HasValue)
+                    {
+                        statuses.Add(dupe.gameObject, status);
+                    }
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("[OniAgent] Could not read room status for dupe " +
+                        i.ToString(CultureInfo.InvariantCulture) + ": " + e);
+                }
+            }
+
+            return statuses;
+        }
+
+        private static void AppendCachedDupeRoomStatus(
+            StringBuilder sb, ref bool hasProperty, MinionIdentity dupe)
+        {
+            DupeRoomStatus status;
+            try
+            {
+                if (dupe == null || dupe.gameObject == null ||
+                    !cachedDupeRoomStatuses.TryGetValue(dupe.gameObject, out status))
+                {
+                    return;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not find cached room status for dupe: " + e);
+                return;
+            }
+
+            try
+            {
+                if (status.RoomType != null)
+                {
+                    AppendStringProperty(sb, ref hasProperty, "room_type", status.RoomType);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not append dupe room type: " + e);
+            }
+
+            try
+            {
+                if (status.RoomX.HasValue)
+                {
+                    AppendNumberProperty(sb, ref hasProperty, "room_x", status.RoomX.Value);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not append dupe room x: " + e);
+            }
+
+            try
+            {
+                if (status.RoomY.HasValue)
+                {
+                    AppendNumberProperty(sb, ref hasProperty, "room_y", status.RoomY.Value);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not append dupe room y: " + e);
+            }
+
+            try
+            {
+                if (status.BedId.HasValue)
+                {
+                    AppendNumberProperty(sb, ref hasProperty, "bed_id", status.BedId.Value);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not append dupe bed id: " + e);
+            }
+
+            try
+            {
+                if (status.BedX.HasValue)
+                {
+                    AppendNumberProperty(sb, ref hasProperty, "bed_x", status.BedX.Value);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not append dupe bed x: " + e);
+            }
+
+            try
+            {
+                if (status.BedY.HasValue)
+                {
+                    AppendNumberProperty(sb, ref hasProperty, "bed_y", status.BedY.Value);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not append dupe bed y: " + e);
             }
         }
 
@@ -2327,6 +2641,7 @@ namespace OniAgent
                 }
 
                 var storedMassByElement = new SortedDictionary<string, float>(StringComparer.Ordinal);
+                bool allStoredItemsRead = true;
                 for (int i = 0; i < storage.items.Count; i++)
                 {
                     try
@@ -2363,28 +2678,32 @@ namespace OniAgent
                     }
                     catch (Exception e)
                     {
+                        allStoredItemsRead = false;
                         Debug.LogWarning("[OniAgent] Could not read stored item " + i +
                             " for building " + entry.Id + ": " + e);
                     }
                 }
 
-                AppendPropertyPrefix(sb, ref hasProperty, "stored");
-                sb.Append("[");
-                bool hasStoredItem = false;
-                foreach (var item in storedMassByElement)
+                if (allStoredItemsRead)
                 {
-                    if (hasStoredItem)
+                    AppendPropertyPrefix(sb, ref hasProperty, "stored");
+                    sb.Append("[");
+                    bool hasStoredItem = false;
+                    foreach (var item in storedMassByElement)
                     {
-                        sb.Append(",");
+                        if (hasStoredItem)
+                        {
+                            sb.Append(",");
+                        }
+                        hasStoredItem = true;
+                        sb.Append("{");
+                        bool hasStoredItemProperty = false;
+                        AppendStringProperty(sb, ref hasStoredItemProperty, "element", item.Key);
+                        AppendNumberProperty(sb, ref hasStoredItemProperty, "kg", item.Value);
+                        sb.Append("}");
                     }
-                    hasStoredItem = true;
-                    sb.Append("{");
-                    bool hasStoredItemProperty = false;
-                    AppendStringProperty(sb, ref hasStoredItemProperty, "element", item.Key);
-                    AppendNumberProperty(sb, ref hasStoredItemProperty, "kg", item.Value);
-                    sb.Append("}");
+                    sb.Append("]");
                 }
-                sb.Append("]");
             }
             catch (Exception e)
             {
@@ -2894,6 +3213,16 @@ namespace OniAgent
     {
         public string Id;
         public List<AgentAction> Actions;
+    }
+
+    internal sealed class DupeRoomStatus
+    {
+        public string RoomType;
+        public int? RoomX;
+        public int? RoomY;
+        public int? BedId;
+        public int? BedX;
+        public int? BedY;
     }
 
     internal sealed class BuildingListEntry

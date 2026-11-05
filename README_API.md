@@ -692,10 +692,11 @@ only when `Building.Def.RequiresPowerInput` is true and an
 
 An empty but readable storage is serialized as an empty list. A building
 without a `Storage` component or with an unreadable storage omits `stored`.
-Under-construction entries are unchanged. Each telemetry field and each
-stored item has its own exception handling and warning, so a failed read
-omits only the affected field or item rather than discarding the building
-entry. These values are included in the existing `building_list` cache
+If any item in a storage cannot be read, the entire `stored` field is omitted
+to avoid presenting a partial total. Under-construction entries are
+unchanged. Each telemetry field and stored item has its own exception
+handling and warning, so a failed read does not discard the building entry.
+These values are included in the existing `building_list` cache
 refresh at approximately 10-second intervals; no additional sampling
 interval was added.
 
@@ -726,6 +727,9 @@ Verified with `ilspycmd 8.2` against the installed
   **CHƯA XÁC MINH** and is omitted rather than reporting a misleading value.
 
 All new game-object and component reads occur in the existing `Game.Update`
-postfix on the main thread. Room and assigned-bed values are optional
-per-dupe fields; an error for one field or dupe is logged and does not prevent
-serialization of other dupes or the separately cached `building_list`.
+postfix on the main thread. Room and assigned-bed values are cached with the
+existing `building_list` refresh at approximately 10-second intervals.
+These are optional per-dupe fields; an error for one field or dupe is logged
+and does not prevent serialization of other dupes or the separately cached
+`building_list`. The agent's Algae warning reader accepts both this `stored`
+list and the older mapping-shaped state.
