@@ -82,9 +82,10 @@ def _state_summary(state: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _append_log(entry: Mapping[str, Any], path: Path = LOG_PATH) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8", newline="\n") as log_file:
+def _append_log(entry: Mapping[str, Any], path: Path | None = None) -> None:
+    destination = LOG_PATH if path is None else path
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("a", encoding="utf-8", newline="\n") as log_file:
         log_file.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
 
 
@@ -95,7 +96,7 @@ def _parse_corridor(value: str) -> tuple[int, int, int, int]:
         raise argparse.ArgumentTypeError("corridor must be x1,y1,x2,y2 integers") from error
     if len(coordinates) != 4:
         raise argparse.ArgumentTypeError("corridor must be x1,y1,x2,y2 integers")
-    return coordinates  # type: ignore[return-value]
+    return coordinates[0], coordinates[1], coordinates[2], coordinates[3]
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

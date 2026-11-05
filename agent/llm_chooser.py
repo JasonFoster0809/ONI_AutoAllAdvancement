@@ -36,8 +36,12 @@ def choose_action(
             raise ValueError(f"duplicate candidate id: {candidate_id}")
         candidate_by_id[candidate_id] = candidate
 
+    if "no_op" in candidate_by_id and candidate_by_id["no_op"]["actions"]:
+        raise ValueError("the no_op candidate must have an empty actions list")
     safe_no_op = dict(candidate_by_id.get("no_op", NO_OP))
-    if not candidate_by_id:
+    if not candidate_by_id or not any(
+        candidate["actions"] for candidate in candidate_by_id.values()
+    ):
         LOGGER.warning("No action candidates; using safe no-op")
         return safe_no_op
 

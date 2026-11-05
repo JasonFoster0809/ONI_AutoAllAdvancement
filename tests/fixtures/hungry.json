@@ -1,0 +1,8 @@
+{
+  "cycle": 12,
+  "resources": {"food_kcal": 25000},
+  "dupes": [{"name": "Fixture Dupe", "calories_kcal": 25, "stress": 20}],
+  "oxygen_air": 900,
+  "environment": {"temperature_avg_k": 295, "oxygen_avg_g": 850},
+  "alerts": [{"type": "dupe_no_calories", "name": "Fixture Dupe"}]
+}
