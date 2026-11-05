@@ -734,7 +734,7 @@ Error(s)**.
 | 2026-11-05 23:57:04 | XONG | Thêm event journal: xây xong, dupe chết, stress vượt ngưỡng, chore đổi; hook đã kiểm bằng `ilspycmd`, xử lý game/file trên `Game.Update`, xoay file khi quá 5 MiB. Build: **0 warnings, 0 errors**; pytest cuối: **105 passed**. C# mới **CHƯA TEST TRONG GAME**. | `15c3f81` |
 | 2026-11-06 00:00:32 | XONG | Thêm Gemini JSON-schema manager và `--mock`; dùng `GEMINI_API_KEY`, không log key; quota miễn phí **TODO_VERIFY**. Pytest cuối: **105 passed**; C# không đổi. | `e7ddadb` |
 | 2026-11-06 00:08:21 | XONG | Nối `--manager {none,qwen,gemini}`; emergency chạy trước manager, giữ Qwen mặc định và `--dry-run`. Pytest cuối: **105 passed**; C# không đổi. | `ec7dc6a` |
-| 2026-11-06 00:14:48 | XONG | Đồng bộ README/API, architecture, roadmap và playbook; thêm kết quả xác minh Latrine, caveat throughput và kiểm tra cuối. Pytest: **105 passed**; build: **0 warnings, 0 errors**; `git diff --check` sạch. Hash commit tài liệu sẽ được ghi trong commit hoàn tất báo cáo. | Đang chờ commit |
+| 2026-11-06 00:15:04 | XONG | Đồng bộ README/API, architecture, roadmap và playbook; thêm kết quả xác minh Latrine, caveat throughput và kiểm tra cuối. Pytest: **105 passed**; build: **0 warnings, 0 errors**; `git diff --check` sạch. | `104a2c7` |
 
 ### Quyết định an toàn và phần bỏ qua
 
