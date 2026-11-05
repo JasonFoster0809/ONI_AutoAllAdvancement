@@ -497,3 +497,55 @@ Commits riêng theo giai đoạn, không push:
 Room classification, build validity thực tế, hiệu ứng Morale/Stamina và
 trao đổi file trong game vẫn cần kiểm chứng thủ công. Không chạy game hoặc
 deploy, không copy DLL và không push.
+
+## Bổ sung: retry đọc kết quả và ngưỡng oxy liên tiếp
+
+### Việc 1 — Đọc `oni_results.json` khi bị khóa
+
+**XONG — `python -m pytest -q`: 48 passed.** Nguyên nhân là mod có thể khóa
+file kết quả trong lúc ghi. `send_command` thử đọc lại khi gặp
+`PermissionError`, `FileNotFoundError` hoặc JSON chưa hoàn chỉnh, trong giới
+hạn timeout hiện có. Lệnh chỉ được ghi một lần trước vòng chờ; lỗi đọc kết
+quả không khiến agent gửi lại lệnh. Test xác nhận file khóa tạm rồi khả dụng,
+và file khóa tới timeout, với một lần ghi lệnh duy nhất.
+
+Commit riêng, không push:
+
+- `c89d017` — Retry transient result file read failures
+
+### Việc 2 — Oxy thấp cần nhiều lần đọc liên tiếp
+
+**XONG — `python -m pytest -q`: 53 passed.** Tín hiệu chính là
+`environment.oxygen_avg_g`; khi trường này vắng hoặc không hợp lệ mới dùng
+`oxygen_air`. Mặc định dưới 50 g phải xuất hiện trong 3 lần đọc state liên
+tiếp trước khi luật oxy kích hoạt. `oxygen_min_g` và
+`oxygen_consecutive_readings` có mặc định tương ứng trong code và cấu hình
+agent. Thiếu dữ liệu hoặc một lần đọc không thấp sẽ ngắt chuỗi. Alert từ mod
+vẫn kích hoạt ngay, không chờ đủ chuỗi oxy. Test bao gồm dao động, tụt kéo
+dài, fallback và alert tức thời.
+
+Ví dụ cấu hình:
+
+```json
+{"oxygen_min_g":50.0,"oxygen_consecutive_readings":3}
+```
+
+Ví dụ state dùng để kiểm tra tín hiệu môi trường:
+
+```json
+{"environment":{"oxygen_avg_g":45.0},"oxygen_air":280.0,"alerts":[]}
+```
+
+Ví dụ fallback khi thiếu `environment.oxygen_avg_g`:
+
+```json
+{"oxygen_air":45.0,"alerts":[]}
+```
+
+`playbook.md` ghi rõ 50 g là ngưỡng chính sách agent, chưa phải ngưỡng nguy
+hiểm đã được xác minh của game. `ROADMAP.md` ghi nhận người dùng báo rằng
+Barracks do agent lập kế hoạch đã được xây và game công nhận từ cycle 3 sang
+4; đây là báo cáo người dùng, không phải kiểm chứng mới trong lần chạy này.
+
+Kết quả cuối: `python -m pytest -q` — **53 passed**. Chỉ chạy kiểm thử
+offline bằng fixture/mocks; không chạy game, deploy hoặc build C#.

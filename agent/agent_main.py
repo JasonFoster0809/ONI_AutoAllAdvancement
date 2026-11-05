@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import time
+from collections import deque
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,7 +22,7 @@ from .planner import (
     registered_goal_ids,
     update_pending,
 )
-from .rules import choose_emergency_action
+from .rules import choose_emergency_action, oxygen_value
 
 
 LOGGER = logging.getLogger(__name__)
@@ -35,6 +37,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "door_id": None,
     "tile_id": None,
     "barracks_bed_count": 4,
+    "oxygen_min_g": 50.0,
+    "oxygen_consecutive_readings": 3,
     "goal_ranks": {},
 }
 
@@ -61,6 +65,21 @@ def load_agent_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     bed_count = config["barracks_bed_count"]
     if isinstance(bed_count, bool) or not isinstance(bed_count, int) or bed_count <= 0:
         raise ValueError("barracks_bed_count must be a positive integer")
+    oxygen_min_g = config["oxygen_min_g"]
+    if (
+        isinstance(oxygen_min_g, bool)
+        or not isinstance(oxygen_min_g, (int, float))
+        or not math.isfinite(oxygen_min_g)
+        or oxygen_min_g < 0
+    ):
+        raise ValueError("oxygen_min_g must be a finite non-negative number")
+    oxygen_readings = config["oxygen_consecutive_readings"]
+    if (
+        isinstance(oxygen_readings, bool)
+        or not isinstance(oxygen_readings, int)
+        or oxygen_readings <= 0
+    ):
+        raise ValueError("oxygen_consecutive_readings must be a positive integer")
     return config
 
 
@@ -129,6 +148,9 @@ def run(argv: Sequence[str] | None = None) -> int:
     if args.tile_id is not None:
         config["tile_id"] = args.tile_id
     enabled_goals = args.goals or registered_goal_ids()
+    oxygen_history: deque[bool] = deque(
+        maxlen=config["oxygen_consecutive_readings"]
+    )
     pending: dict[str, dict[str, Any]] = {}
     step = 0
 
@@ -144,6 +166,10 @@ def run(argv: Sequence[str] | None = None) -> int:
 
         try:
             state = read_state(args.data_dir)
+            oxygen = oxygen_value(state)
+            oxygen_history.append(
+                oxygen is not None and oxygen < config["oxygen_min_g"]
+            )
             summary = _state_summary(state)
             catalog = load_catalog(args.data_dir)
             pending_expired = update_pending(
@@ -160,7 +186,13 @@ def run(argv: Sequence[str] | None = None) -> int:
                     config["pending_steps"],
                 )
 
-            emergency = choose_emergency_action(state, [])
+            emergency = choose_emergency_action(
+                state,
+                [],
+                oxygen_history=tuple(oxygen_history),
+                oxygen_min_g=config["oxygen_min_g"],
+                oxygen_consecutive_readings=config["oxygen_consecutive_readings"],
+            )
             if emergency is not None:
                 selected = {
                     "goal_id": "emergency",

@@ -21,14 +21,25 @@ def _number(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
-def oxygen_rule(state: Mapping[str, Any]) -> str | None:
-    """Flag very low oxygen mass around the first duplicant or telepad."""
-    oxygen = _number(state.get("oxygen_air"))
+def oxygen_value(state: Mapping[str, Any]) -> float | None:
+    """Return telepad-area oxygen first, falling back to the first dupe sample."""
+    environment = state.get("environment")
+    oxygen = (
+        _number(environment.get("oxygen_avg_g"))
+        if isinstance(environment, Mapping)
+        else None
+    )
     if oxygen is None:
-        environment = state.get("environment")
-        if isinstance(environment, Mapping):
-            oxygen = _number(environment.get("oxygen_avg_g"))
-    if oxygen is not None and oxygen < OXYGEN_MIN_G:
+        oxygen = _number(state.get("oxygen_air"))
+    return oxygen
+
+
+def oxygen_rule(
+    state: Mapping[str, Any], minimum_g: float = OXYGEN_MIN_G
+) -> str | None:
+    """Flag oxygen below the agent's configured policy threshold."""
+    oxygen = oxygen_value(state)
+    if oxygen is not None and oxygen < minimum_g:
         return "low_oxygen"
     return None
 
@@ -100,11 +111,26 @@ def _has_alert(state: Mapping[str, Any], alert_type: str) -> bool:
 
 
 def choose_emergency_action(
-    state: Mapping[str, Any], candidates: Sequence[Mapping[str, Any]]
+    state: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    oxygen_history: Sequence[bool] | None = None,
+    oxygen_min_g: float = OXYGEN_MIN_G,
+    oxygen_consecutive_readings: int = 1,
 ) -> dict[str, Any] | None:
     """Apply the highest-priority rule before any LLM choice."""
     ordered_rules = (
-        (oxygen_rule, "oxygen"),
+        (
+            lambda current_state: oxygen_rule(current_state, oxygen_min_g)
+            if oxygen_history is None
+            or (
+                oxygen_consecutive_readings > 0
+                and len(oxygen_history) >= oxygen_consecutive_readings
+                and all(oxygen_history[-oxygen_consecutive_readings:])
+            )
+            else None,
+            "oxygen",
+        ),
         (hunger_rule, "food"),
         (stress_rule, "stress"),
         (temperature_rule, "temperature"),

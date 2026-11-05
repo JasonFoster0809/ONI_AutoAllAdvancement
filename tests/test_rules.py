@@ -1,4 +1,5 @@
 import json
+from collections import deque
 from pathlib import Path
 
 from agent.rules import (
@@ -6,6 +7,7 @@ from agent.rules import (
     choose_emergency_action,
     hunger_rule,
     oxygen_rule,
+    oxygen_value,
     stress_rule,
     temperature_rule,
 )
@@ -28,6 +30,69 @@ def test_oxygen_rule_and_highest_priority_selection():
     ]
     assert oxygen_rule(state) == "low_oxygen"
     assert choose_emergency_action(state, candidates)["id"] == "oxygen"
+
+
+def _evaluate_oxygen_samples(states, consecutive=3, threshold=50.0):
+    history = deque(maxlen=consecutive)
+    decision = None
+    for state in states:
+        oxygen = oxygen_value(state)
+        history.append(oxygen is not None and oxygen < threshold)
+        decision = choose_emergency_action(
+            state,
+            [],
+            oxygen_history=tuple(history),
+            oxygen_min_g=threshold,
+            oxygen_consecutive_readings=consecutive,
+        )
+    return decision
+
+
+def test_oxygen_fluctuation_does_not_trigger_before_consecutive_threshold():
+    states = [
+        {"oxygen_air": 16, "environment": {"oxygen_avg_g": 280}},
+        {"oxygen_air": 288, "environment": {"oxygen_avg_g": 20}},
+        {"oxygen_air": 16, "environment": {"oxygen_avg_g": 300}},
+    ]
+
+    assert _evaluate_oxygen_samples(states) is None
+    assert oxygen_rule(states[0]) is None
+
+
+def test_sustained_low_oxygen_triggers_after_configured_readings():
+    states = [
+        {"environment": {"oxygen_avg_g": value}, "alerts": []}
+        for value in (45, 40, 35)
+    ]
+
+    decision = _evaluate_oxygen_samples(states)
+
+    assert decision is not None
+    assert decision["reason"] == "low_oxygen"
+
+
+def test_oxygen_uses_dupe_sample_when_environment_value_is_unavailable():
+    state = {"oxygen_air": 30, "environment": {"temperature_avg_k": 295}}
+    assert oxygen_value(state) == 30
+    assert oxygen_rule(state) == "low_oxygen"
+    assert _evaluate_oxygen_samples([state] * 3)["reason"] == "low_oxygen"
+
+
+def test_mod_alert_triggers_without_oxygen_reading_history():
+    state = {
+        "oxygen_air": 10,
+        "environment": {"oxygen_avg_g": 300},
+        "alerts": [{"type": "oxygen_warning"}],
+    }
+
+    decision = choose_emergency_action(
+        state,
+        [],
+        oxygen_history=(False,),
+        oxygen_consecutive_readings=3,
+    )
+
+    assert decision["reason"] == "alert:oxygen_warning"
 
 
 def test_hunger_rule():

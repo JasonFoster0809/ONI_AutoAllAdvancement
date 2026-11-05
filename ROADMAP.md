@@ -29,9 +29,10 @@ goal planner, pending build tracking, CLI loop, and JSON Lines logging are
 implemented. Remaining work:
 
 - Populate `agent/config.json` with prefab IDs copied from `oni_catalog.json`.
-- Test room snapshots and generated Barracks construction in a disposable
-  game colony; this implementation is currently verified only by decompilation,
-  build, and offline fixtures.
+- The user reports that the Barracks planned by the agent was built and
+  recognized by ONI in a real colony between cycles 3 and 4. Other room
+  snapshots and file-exchange edge cases still need validation in a disposable
+  colony.
 - Decide which safe actions should address oxygen, food, stress, and
   temperature emergencies; currently the hard rules stop at no-op.
 - Verify the selected Ollama model and local endpoint on the user's machine.
@@ -39,6 +40,11 @@ implemented. Remaining work:
   not a substitute for game integration.
 - Check the configured Door dimensions against the Bed height; the planner
   safely rejects a Door that cannot fit in the requested room height.
+
+The command client now retries transient result-file locks/partial JSON until
+the command's existing timeout. The initiating failure was the mod briefly
+locking `oni_results.json` while publishing the result; retries never rewrite
+or resend the already-published command.
 
 ## 4. Validation, safety, and documentation
 

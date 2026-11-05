@@ -84,6 +84,16 @@ def test_dry_run_writes_jsonl_without_sending(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
     monkeypatch.setattr(
         agent_main,
+        "load_agent_config",
+        lambda _path: {
+            "priority_techs": ["FarmingTech"],
+            "pending_steps": 30,
+            "oxygen_min_g": 50.0,
+            "oxygen_consecutive_readings": 1,
+        },
+    )
+    monkeypatch.setattr(
+        agent_main,
         "send_command",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("dry-run must not send commands")
@@ -129,6 +139,16 @@ def test_emergency_rule_runs_before_catalog_or_skills(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
     monkeypatch.setattr(
         agent_main,
+        "load_agent_config",
+        lambda _path: {
+            "priority_techs": ["FarmingTech"],
+            "pending_steps": 30,
+            "oxygen_min_g": 50.0,
+            "oxygen_consecutive_readings": 1,
+        },
+    )
+    monkeypatch.setattr(
+        agent_main,
         "choose_action",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("emergency must skip the LLM")
@@ -151,6 +171,48 @@ def test_emergency_rule_runs_before_catalog_or_skills(tmp_path, monkeypatch):
     assert entry["result"]["reason"] == "low_oxygen"
 
 
+def test_agent_requires_three_consecutive_low_environment_samples(
+    tmp_path, monkeypatch
+):
+    states = [
+        {
+            "cycle": index,
+            "dupes": [],
+            "oxygen_air": 15,
+            "environment": {"oxygen_avg_g": 30},
+            "alerts": [],
+        }
+        for index in range(1, 4)
+    ]
+    (tmp_path / "oni_catalog.json").write_text("[]", encoding="utf-8")
+    log_path = tmp_path / "logs" / "agent.jsonl"
+    monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
+    monkeypatch.setattr(agent_main, "read_state", lambda _root: states.pop(0))
+    monkeypatch.setattr(agent_main, "time", type("NoSleep", (), {"sleep": staticmethod(lambda _: None)})())
+    monkeypatch.setattr(
+        agent_main,
+        "send_command",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("all returned actions should be no-op in this test")
+        ),
+    )
+
+    assert agent_main.run(
+        ["--max-steps", "3", "--data-dir", str(tmp_path)]
+    ) == 0
+
+    entries = [
+        json.loads(line)
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [entry["goal_id"] for entry in entries] == [
+        "no_goal",
+        "no_goal",
+        "emergency",
+    ]
+    assert entries[-1]["result"]["reason"] == "low_oxygen"
+
+
 def test_llm_is_called_only_for_same_rank_goal_tie(tmp_path, monkeypatch, capsys):
     (tmp_path / "oni_state.json").write_text(
         json.dumps({"cycle": 2, "dupes": [], "oxygen_air": 900, "alerts": []}),
@@ -162,7 +224,12 @@ def test_llm_is_called_only_for_same_rank_goal_tie(tmp_path, monkeypatch, capsys
     monkeypatch.setattr(
         agent_main,
         "load_agent_config",
-        lambda path: {"priority_techs": ["FarmingTech"], "pending_steps": 30},
+        lambda path: {
+            "priority_techs": ["FarmingTech"],
+            "pending_steps": 30,
+            "oxygen_min_g": 50.0,
+            "oxygen_consecutive_readings": 3,
+        },
     )
     monkeypatch.setattr(
         planner,

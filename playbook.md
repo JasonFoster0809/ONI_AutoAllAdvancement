@@ -76,11 +76,18 @@ they depend on traits, building configuration, or game version.
 - The mod's simple alerts are generated at zero dupe calories and stress at
   least 90 on its 0-100 stress scale. Zero calories is a narrow alert, not a
   verified game hunger threshold.
-- The offline Python agent currently treats oxygen below 50 g per sampled
-  cell, dupe calories below 100 kcal, stress at least 90, or average
-  temperature outside 273.15-318.15 K as emergency heuristics. These are
-  agent policy thresholds, not verified ONI danger limits; **cần kiểm chứng**
-  against a live colony before enabling automatic commands.
+- The Python agent uses `environment.oxygen_avg_g` as the primary oxygen
+  signal, falling back to `oxygen_air` only when the environment value is
+  unavailable. Oxygen below 50 g triggers the emergency rule only after 3
+  consecutive state reads by default; both `oxygen_min_g` and
+  `oxygen_consecutive_readings` are configurable in `agent/config.json`.
+  Alerts reported by the mod still trigger immediately. The 50 g threshold is
+  an agent policy threshold, **not a game-verified danger limit**; validate
+  it against a live colony before enabling automatic responses.
+- Other offline Python emergency heuristics include dupe calories below 100
+  kcal, stress at least 90, and average temperature outside 273.15-318.15 K.
+  These are agent policy thresholds, not verified ONI danger limits; **cần
+  kiểm chứng** against a live colony before enabling automatic commands.
 - `resources.materials` reports positive material stock in kilograms. The
   Python Barracks planner aggregates catalog `mass_kg` by material group
   before selecting elements; it refuses to plan when inventory or required
