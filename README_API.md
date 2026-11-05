@@ -568,3 +568,11 @@ conversion, so it does not scan every grid cell. Cache the serialized array
 for approximately 10 seconds, as with `building_list`, rather than traversing
 the list on every approximately 2-second state write. This is an estimate
 from the iteration shape; no runtime profiling was performed.
+
+The current C# state implementation emits the `rooms` property only when the
+RoomProber snapshot succeeds. It refreshes the serialized array approximately
+every 10 seconds, keyed by active world ID; an unavailable prober or a
+refresh-level error omits the property. Individual invalid room entries are
+logged and skipped. The implementation uses `Game.Instance.roomProber.rooms`,
+`Room.roomType.Id`, `Room.cavity.NumCells`, `Room.cavity.cells`, and
+`Grid.CellToXY`.

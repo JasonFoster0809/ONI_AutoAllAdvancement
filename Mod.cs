@@ -28,12 +28,15 @@ namespace OniAgent
         static float nextResultWrite = 0f;
         static float nextBlueprintExportCheck = 0f;
         static float nextBuildingListUpdate = 0f;
+        static float nextRoomsUpdate = 0f;
         static float nextResearchUpdate = 0f;
         static float nextScheduleUpdate = 0f;
         static float nextMaterialsUpdate = 0f;
         static int cachedBuildingWorldId = int.MinValue;
+        static int cachedRoomsWorldId = int.MinValue;
         static int cachedMaterialsWorldId = int.MinValue;
         static string cachedBuildingListJson = "[]";
+        static string cachedRoomsJson;
         static string cachedMaterialsJson;
         static string cachedResearchJson;
         static string cachedScheduleJson;
@@ -249,6 +252,16 @@ namespace OniAgent
 
             try
             {
+                UpdateRoomsCache(activeWorld);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not update rooms cache: " + e);
+                cachedRoomsJson = null;
+            }
+
+            try
+            {
                 UpdateResearchCache();
             }
             catch (Exception e)
@@ -270,6 +283,12 @@ namespace OniAgent
             ExportBlueprintIfRequested();
             AppendPropertyPrefix(sb, ref hasRootProperty, "building_list");
             sb.Append(cachedBuildingListJson);
+
+            if (cachedRoomsJson != null)
+            {
+                AppendPropertyPrefix(sb, ref hasRootProperty, "rooms");
+                sb.Append(cachedRoomsJson);
+            }
 
             if (cachedResearchJson != null)
             {
@@ -1622,6 +1641,105 @@ namespace OniAgent
                 cachedBuildingWorldId = activeWorld != null ? activeWorld.id : int.MinValue;
                 nextBuildingListUpdate = Time.unscaledTime + 10f;
             }
+        }
+
+        private static void UpdateRoomsCache(WorldContainer activeWorld)
+        {
+            if (activeWorld == null)
+            {
+                cachedRoomsJson = null;
+                cachedRoomsWorldId = int.MinValue;
+                nextRoomsUpdate = Time.unscaledTime + 10f;
+                return;
+            }
+
+            if (activeWorld.id == cachedRoomsWorldId && Time.unscaledTime < nextRoomsUpdate)
+            {
+                return;
+            }
+
+            nextRoomsUpdate = Time.unscaledTime + 10f;
+            try
+            {
+                var game = Game.Instance;
+                var roomProber = game != null ? game.roomProber : null;
+                if (roomProber == null || roomProber.rooms == null)
+                {
+                    throw new InvalidOperationException("RoomProber is unavailable.");
+                }
+
+                cachedRoomsJson = BuildRoomsJson(roomProber.rooms, activeWorld.id);
+                cachedRoomsWorldId = activeWorld.id;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[OniAgent] Could not refresh rooms: " + e);
+                cachedRoomsJson = null;
+                cachedRoomsWorldId = activeWorld.id;
+            }
+        }
+
+        private static string BuildRoomsJson(List<Room> rooms, int activeWorldId)
+        {
+            var sb = new StringBuilder("[");
+            bool hasRoom = false;
+            for (int i = 0; i < rooms.Count; i++)
+            {
+                try
+                {
+                    var room = rooms[i];
+                    var cavity = room != null ? room.cavity : null;
+                    var roomType = room != null ? room.roomType : null;
+                    if (cavity == null || roomType == null ||
+                        cavity.cells == null || cavity.cells.Count == 0 ||
+                        string.IsNullOrEmpty(roomType.Id))
+                    {
+                        continue;
+                    }
+
+                    int representativeCell = -1;
+                    for (int cellIndex = 0; cellIndex < cavity.cells.Count; cellIndex++)
+                    {
+                        int candidateCell = cavity.cells[cellIndex];
+                        if (Grid.IsValidCellInWorld(candidateCell, activeWorldId))
+                        {
+                            representativeCell = candidateCell;
+                            break;
+                        }
+                    }
+
+                    if (representativeCell < 0)
+                    {
+                        continue;
+                    }
+
+                    int x;
+                    int y;
+                    Grid.CellToXY(representativeCell, out x, out y);
+                    var entry = new StringBuilder();
+                    entry.Append("{");
+                    bool hasProperty = false;
+                    AppendStringProperty(entry, ref hasProperty, "type", roomType.Id);
+                    AppendNumberProperty(entry, ref hasProperty, "size", cavity.NumCells);
+                    AppendNumberProperty(entry, ref hasProperty, "x", x);
+                    AppendNumberProperty(entry, ref hasProperty, "y", y);
+                    entry.Append("}");
+
+                    if (hasRoom)
+                    {
+                        sb.Append(",");
+                    }
+                    hasRoom = true;
+                    sb.Append(entry);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("[OniAgent] Could not serialize room " + i + ": " + e);
+                }
+            }
+
+            sb.Append("]");
+            return sb.ToString();
         }
 
         private static void UpdateResearchCache()
