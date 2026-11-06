@@ -54,6 +54,14 @@ before relying on automation; no game was launched for this work.
 - Gemini uses `GEMINI_API_KEY` from the environment, sends a minimal state
   summary and predefined goals, and does not log the key. Current free-tier
   quotas are **TODO_VERIFY**.
+- `agent/strategist.py` optionally ranks allow-listed planner goals from a
+  compact state/score/recent-lesson summary. Provider defaults to `none`;
+  Ollama uses the configured local model, while Gemini requires a model name
+  explicitly supplied in `agent/config.json` and `GEMINI_API_KEY` in the
+  environment. Bounded retries, cadence, schema checks, and emergency/rule
+  precedence are covered offline. The strategist only reorders planner goals;
+  it cannot issue actions. Gemini model availability and quotas remain
+  **TODO_VERIFY**.
 - `agent/diagnostics.py` summarizes trends, empty Deoxidizer stores, repeated
   blocked builds, and stagnant research from available logs and current
   state. Old log fields may be missing; it reports unknown instead of
@@ -67,8 +75,11 @@ before relying on automation; no game was launched for this work.
   per cycle, and latest dupe count. Latest observed cycle is not a death
   cycle; dry-run does not count as a command result.
 
-Remaining work is to test generated build layouts, storage status, event
-logging, power connections, and file exchange in a disposable live colony.
+Only `research_target` and `barracks` are currently registered planner goals;
+achievement-specific goal coverage and the generated-skill factory remain
+unimplemented for later stages. Remaining work is to test generated build
+layouts, storage status, event logging, power connections, and file exchange
+in a disposable live colony.
 The user-reported MineralDeoxidizer Algae use of approximately 0.08–0.22 kg/s
 conflicts with the decompiled 0.55 kg/s configured rate; the actual runtime
 throughput remains **TODO_VERIFY** and is not an agent constant.

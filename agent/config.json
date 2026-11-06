@@ -52,5 +52,19 @@
       "rejection_repetitions": "TODO_VERIFY; agent policy for repeated identical command rejection, not an ONI mechanic"
     }
   },
+  "strategist": {
+    "provider": "none",
+    "interval_cycles": 3,
+    "max_goals": 3,
+    "timeout_seconds": 60,
+    "retry_attempts": 2,
+    "backoff_seconds": 0.5,
+    "ollama_model": "qwen2.5-coder:3b",
+    "gemini_model": null,
+    "notes": {
+      "interval_cycles": "Agent policy for request frequency, not an ONI mechanic",
+      "gemini_model": "Set explicitly to a model available to the configured Gemini API; no default is assumed"
+    }
+  },
   "goal_ranks": {}
 }

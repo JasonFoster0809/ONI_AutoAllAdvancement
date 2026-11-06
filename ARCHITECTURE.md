@@ -17,10 +17,10 @@ Files in the ONI user data directory
 Python agent
   read state, catalog, and pending acknowledgements
     → detect deterministic emergencies before any manager call
-    → optional Gemini manager returns allow-listed goal IDs (5–10 cycle horizon)
     → evaluate priority rules with unknown-aware state conditions
-    → execute the selected rule skill, or fall back to the ordered goal planner
-    → optional local Qwen tie-breaker selects only a supplied goal candidate
+    → if no rule matches, optional strategist ranks allow-listed planner goals
+    → planner turns the first eligible ranked goal into actions
+    → legacy Gemini manager or local Qwen tie-breaker remains optional
     → preserve --dry-run or send the selected action batch
     → track pending actions, cycle cooldowns, reasons, and results in JSONL
 
@@ -54,6 +54,18 @@ one rotated `.1` backup.
   actions at 12 per turn. Its validated phase metadata labels cycles 0–9 as
   `early`, 10–29 as `growth`, and 30–99 as `midgame`; the phase is reported,
   not used to filter planner goals.
+- `agent.strategist` is a separate, optional goal-only layer. Its provider is
+  `none` by default; `ollama` uses the configured local model and `gemini`
+  requires both `GEMINI_API_KEY` and an explicitly configured model name.
+  Requests are limited to once every configured number of cycles (default 3),
+  retry with bounded backoff, and accept only JSON goal IDs currently offered
+  by the planner. A valid proposal changes planner goal order, never sends a
+  game command. Invalid responses and provider errors result in a no-op;
+  deterministic emergency and priority-rule selections run first.
+- Strategist summaries contain only cycle, selected colony metrics, the latest
+  available score, recent lessons, active goal, planner goal descriptions, and
+  rule context. They exclude the map and raw building list. The latest score
+  may be unavailable on the initial loop iteration.
 - Rule cycle gates can schedule a water pump/wash basin and one PlanterBox in
   cycles 10–29, then one MassageTable and StorageLocker in cycles 30–99.
   These are catalog/inventory checked plans, not proof the colony's needs or
@@ -81,10 +93,12 @@ one rotated `.1` backup.
   `logs/metrics.json`. The reported cycle is the latest observed, not a
   confirmed death cycle; dry-run entries have no command result counts.
 
-The Gemini manager receives only `cycle`, dupe count, local oxygen average,
-food calories, and the allow-listed goal descriptions. It does not receive
-dupe names, the map, building lists, or action payloads. The Qwen chooser
-remains local at `http://localhost:11434/api/generate`.
+The legacy Gemini manager receives only `cycle`, dupe count, local oxygen
+average, food calories, and the allow-listed goal descriptions. The strategist
+also sends a compact metrics/score/lessons summary and rule context. Neither
+receives dupe names, the map, building lists, or action payloads. The Qwen
+chooser and Ollama strategist remain local at
+`http://localhost:11434/api/generate`.
 
 ## Important boundaries
 

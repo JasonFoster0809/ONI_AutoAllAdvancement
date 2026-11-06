@@ -985,5 +985,53 @@ Get-Content .\agent\memory.json
 Get-Content .\agent\rules_proposed.yaml
 ```
 
-Chưa chạy game/deploy, không copy DLL, không push. Giai đoạn 4 trở đi chưa
-được thực hiện.
+Chưa chạy game/deploy, không copy DLL, không push. Giai đoạn 4 được ghi ở
+phần strategist bên dưới; giai đoạn 5 trở đi chưa được thực hiện.
+
+## Giai đoạn 4 — Tầng strategist
+
+**XONG — chỉ Python, kiểm thử offline.** Thêm `agent/strategist.py` với
+interface provider độc lập, provider `none` mặc định, Ollama
+(`qwen2.5-coder:3b`, JSON, temperature 0, timeout mặc định 60 giây) và Gemini.
+Gemini chỉ dùng model được khai báo rõ trong `agent/config.json`; hiện để
+`null`, không suy đoán model hay hạn mức. Khóa Gemini chỉ đọc từ
+`GEMINI_API_KEY`, gửi trong header và không ghi vào log.
+
+Strategist chỉ chạy khi emergency và rule engine không chọn hành động. Mỗi
+3 cycle mặc định, gửi tóm tắt ngắn gồm state metrics, điểm gần nhất, tối đa
+ba bài học, mục tiêu đang chạy, mục tiêu planner hợp lệ và rule context.
+Phản hồi chỉ nhận đúng schema `{goals:[{id,horizon_cycles,reason}]}`, kiểm
+allowlist, ID trùng, số lượng tối đa và giá trị horizon. Kế hoạch hợp lệ chỉ
+thay đổi thứ tự mục tiêu đầu vào planner; strategist không thể phát action.
+Lỗi provider/timeout/JSON/ID sai hoặc vượt giới hạn trả no-op; retry tối đa
+2 lần với backoff mặc định 0,5 giây. Khi chưa đến chu kỳ gọi tiếp theo thì
+dùng kế hoạch đã cache. Luật khẩn cấp và rule engine vẫn đứng trước tầng này.
+
+**Kiểm chứng:** `python -m pytest -q` — **163 passed**;
+`python -m agent.rule_engine --validate` — **valid, 9 rules**. Pylance không
+phát hiện lỗi cú pháp ở `agent/strategist.py` và `agent/agent_main.py`.
+`dotnet build` không chạy vì giai đoạn này chỉ sửa Python, không thay đổi C#.
+Không gọi Ollama/Gemini thật, không chạy game, deploy, copy DLL hoặc push.
+
+Files thêm/sửa: `agent/strategist.py`, `agent/agent_main.py`,
+`agent/config.json`, `tests/test_strategist.py`, `tests/test_agent_main.py`,
+`ARCHITECTURE.md`, `ROADMAP.md` và báo cáo này. Test gồm provider giả cho
+JSON hợp lệ/sai, ID lạ, quá giới hạn, timeout/retry/backoff, tắt provider,
+cadence/cache, tóm tắt state, Gemini key không lộ ra log, tích hợp thứ tự
+planner và emergency không gọi strategist.
+
+TODO_VERIFY: tên/khả dụng model Gemini và hạn mức dịch vụ; đây không phải
+giả định hay mặc định trong code. Các ngưỡng game vốn được đánh dấu
+`TODO_VERIFY` trong scoring/rules không đổi. Không có API C# mới. Planner
+hiện chỉ có `research_target` và `barracks`; các goal thành tựu và skill
+factory chưa triển khai ở giai đoạn này. Chưa có kỹ năng strategist mới.
+
+Lệnh PowerShell kiểm tra thử an toàn (cần state/catalog thật; cấu hình mặc
+định `provider: none`, `--dry-run` không gửi action):
+
+```powershell
+python -m agent.rule_engine --validate
+python -m agent.agent_main --dry-run --manager none --max-steps 3 --data-dir "$env:USERPROFILE\Documents\Klei\OxygenNotIncluded" --config agent/config.json
+```
+
+Giai đoạn 5 trở đi chưa được thực hiện.

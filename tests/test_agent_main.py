@@ -477,6 +477,117 @@ def test_emergency_action_limit_caps_food_priority_actions(tmp_path, monkeypatch
     assert any(item["reason"] == "emergency_action_limit" for item in entry["skipped"])
 
 
+def test_emergency_rules_run_before_strategist_provider(tmp_path, monkeypatch):
+    config_path = _write_emergency_inputs(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["strategist"]["provider"] = "ollama"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    log_path = tmp_path / "logs" / "agent.jsonl"
+    monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
+    monkeypatch.setattr(agent_main, "time", _no_sleep_time())
+    provider_calls = []
+
+    class Provider:
+        def generate(self, *_args, **_kwargs):
+            provider_calls.append(True)
+            return '{"goals":[]}'
+
+    monkeypatch.setattr(agent_main, "create_goal_provider", lambda _config: Provider())
+    monkeypatch.setattr(
+        agent_main,
+        "send_command",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("emergency dry-run must not send commands")
+        ),
+    )
+
+    assert agent_main.run(
+        [
+            "--dry-run",
+            "--max-steps",
+            "1",
+            "--data-dir",
+            str(tmp_path),
+            "--config",
+            str(config_path),
+        ]
+    ) == 0
+
+    entry = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert entry["goal_id"] == "emergency"
+    assert entry["selection_reason"] == "rule"
+    assert provider_calls == []
+
+
+def test_strategist_goal_order_is_applied_by_planner(tmp_path, monkeypatch):
+    fixtures = Path(__file__).parent / "fixtures"
+    state = json.loads((fixtures / "barracks_clear.json").read_text(encoding="utf-8"))
+    state.update(
+        {
+            "cycle": 0,
+            "dupes": [],
+            "research": {
+                "active": None,
+                "techs": [
+                    {"id": "FarmingTech", "complete": False, "ready": True}
+                ],
+            },
+        }
+    )
+    (tmp_path / "oni_state.json").write_text(json.dumps(state), encoding="utf-8")
+    (tmp_path / "oni_catalog.json").write_text(
+        (fixtures / "barracks_catalog.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    config = {
+        **agent_main.DEFAULT_CONFIG,
+        "bed_id": "Bed",
+        "door_id": "Door",
+        "tile_id": "Tile",
+        "barracks_bed_count": 1,
+        "strategist": {
+            **agent_main.DEFAULT_CONFIG["strategist"],
+            "provider": "ollama",
+        },
+    }
+    config_path = tmp_path / "agent-config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    log_path = tmp_path / "logs" / "agent.jsonl"
+    monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
+    monkeypatch.setattr(agent_main, "time", _no_sleep_time())
+
+    class Provider:
+        def generate(self, *_args, **_kwargs):
+            return (
+                '{"goals":[{"id":"barracks","horizon_cycles":3,'
+                '"reason":"A barracks is not reported"}]}'
+            )
+
+    monkeypatch.setattr(agent_main, "create_goal_provider", lambda _config: Provider())
+
+    assert agent_main.run(
+        [
+            "--dry-run",
+            "--manager",
+            "none",
+            "--max-steps",
+            "1",
+            "--data-dir",
+            str(tmp_path),
+            "--config",
+            str(config_path),
+        ]
+    ) == 0
+
+    entry = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert entry["goal_id"] == "barracks"
+    assert entry["selection_reason"] == "strategist"
+    assert entry["strategist"]["goals"][0]["reason"] == (
+        "A barracks is not reported"
+    )
+    assert all(action["type"] == "build" for action in entry["actions"])
+
+
 def _rule_test_state():
     rows = ["." * 41 for _ in range(40)] + ["#" * 41]
     return {

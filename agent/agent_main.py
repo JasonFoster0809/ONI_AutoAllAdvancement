@@ -41,6 +41,7 @@ from .scoring import (
     make_score_record,
     write_score_record,
 )
+from .strategist import Strategist, create_goal_provider
 from .skills import (
     SkillPlan,
     SkillPlanningError,
@@ -76,6 +77,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "emergency_cooldown_cycles": 1,
     "emergency_pending_cycles": 2,
     "scoring": DEFAULT_SCORING_CONFIG,
+    "strategist": {
+        "provider": "none",
+        "interval_cycles": 3,
+        "max_goals": 3,
+        "timeout_seconds": 60,
+        "retry_attempts": 2,
+        "backoff_seconds": 0.5,
+        "ollama_model": "qwen2.5-coder:3b",
+        "gemini_model": None,
+    },
     "goal_ranks": {},
 }
 
@@ -450,6 +461,16 @@ def run(argv: Sequence[str] | None = None) -> int:
     emergency_pending: dict[str, dict[str, Any]] = {}
     emergency_cooldowns: dict[str, int] = {}
     scoring_tracker = ScoringTracker(config.get("scoring"))
+    strategist: Strategist | None = None
+    strategist_settings = config.get("strategist", {})
+    if isinstance(strategist_settings, Mapping):
+        try:
+            strategist_provider = create_goal_provider(strategist_settings)
+            strategist = Strategist(strategist_settings, strategist_provider)
+        except ValueError as error:
+            LOGGER.error("Strategist configuration is invalid; disabled (%s)", error)
+    else:
+        LOGGER.error("Strategist configuration is invalid; disabled")
     event_reader = EventJournalReader(
         get_data_dir(args.data_dir) / "oni_events.jsonl",
         start_at_end=True,
@@ -490,6 +511,8 @@ def run(argv: Sequence[str] | None = None) -> int:
         memory_tracker = None
     agent_commit = current_commit_hash(Path(__file__).resolve().parent.parent)
     previous_score_state: dict[str, Any] | None = None
+    latest_score: dict[str, Any] | None = None
+    active_goal: str | None = None
     cached_manager_goals: list[dict[str, Any]] | None = None
     manager_plan_expires_cycle: int | None = None
     step = 0
@@ -507,6 +530,9 @@ def run(argv: Sequence[str] | None = None) -> int:
         rule_decision: Mapping[str, Any] | None = None
         rule_replay_input: Mapping[str, Any] | None = None
         manager_plan: list[dict[str, Any]] | None = None
+        strategist_decision: dict[str, Any] | None = None
+        strategy_active = False
+        strategy_no_op = False
         catalog: list[dict[str, Any]] = []
         cycle: int | None = None
         score_events: list[dict[str, Any]] | None = None
@@ -614,7 +640,11 @@ def run(argv: Sequence[str] | None = None) -> int:
             else:
                 manager_goal_ids = enabled_goals
                 manager_config = config
-                if args.manager == "gemini":
+                strategist_enabled = (
+                    strategist is not None
+                    and strategist.config["provider"] != "none"
+                )
+                if args.manager == "gemini" and not strategist_enabled:
                     if cycle is None:
                         LOGGER.warning("Gemini manager skipped: cycle is unavailable")
                     elif (
@@ -673,6 +703,55 @@ def run(argv: Sequence[str] | None = None) -> int:
                     },
                 }
                 chosen_rule = rule_decision["selected"]
+                if chosen_rule is None and strategist is not None:
+                    strategy_lessons: list[dict[str, Any]] = []
+                    if memory_tracker is not None:
+                        try:
+                            strategy_lessons = memory_tracker.lessons_for_log(limit=3)
+                        except (TypeError, ValueError) as error:
+                            LOGGER.warning(
+                                "Could not read strategist lessons (%s)",
+                                type(error).__name__,
+                            )
+                    available_goals = [
+                        {"id": goal.id, "description": goal.description}
+                        for goal in planner_module.GOALS
+                        if goal.id in enabled_goals
+                    ]
+                    rule_items = rules_document.get("rules", [])
+                    strategy_rules = (
+                        rule_items
+                        if isinstance(rule_items, list)
+                        else []
+                    )
+                    decision = strategist.advise(
+                        cycle=cycle,
+                        state=state,
+                        score=latest_score,
+                        lessons=strategy_lessons,
+                        active_goal=active_goal,
+                        available_goals=available_goals,
+                        rules=strategy_rules,
+                    )
+                    if decision is not None:
+                        strategy_active = True
+                        manager_plan = [dict(goal) for goal in decision.goals]
+                        strategist_decision = {
+                            "status": decision.status,
+                            "requested": decision.requested,
+                            "goals": manager_plan,
+                        }
+                        strategy_no_op = not decision.goals
+                        if decision.goals:
+                            manager_goal_ids = [goal["id"] for goal in decision.goals]
+                            manager_config = {
+                                **config,
+                                "goal_ranks": {
+                                    goal_id: rank
+                                    for rank, goal_id in enumerate(manager_goal_ids)
+                                },
+                            }
+                tied_steps: list[dict[str, Any]] = []
                 if chosen_rule is not None:
                     rule_id = chosen_rule["rule_id"]
                     actions = list(chosen_rule.get("actions", []))
@@ -696,8 +775,15 @@ def run(argv: Sequence[str] | None = None) -> int:
                         "reason": reason,
                     }
                     selection_reason = "rule_engine"
+                elif strategy_no_op:
+                    selected = {
+                        "goal_id": "no_goal",
+                        "actions": [],
+                        "skipped": [{"reason": f"strategist_{strategist_decision['status']}"}],
+                        "reason": "strategist_no_op",
+                    }
+                    selection_reason = "strategist"
                 else:
-                    tied_steps: list[dict[str, Any]] = []
                     selected = next_step(
                         state,
                         catalog,
@@ -706,7 +792,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                         enabled_goals=manager_goal_ids,
                         alternatives=tied_steps,
                     )
-                if chosen_rule is None and tied_steps:
+                if chosen_rule is None and tied_steps and not strategy_active:
                     candidates = [
                         {
                             "id": selected["goal_id"],
@@ -740,12 +826,16 @@ def run(argv: Sequence[str] | None = None) -> int:
                                 if candidate["goal_id"] == llm_choice.get("id")
                             )
                             selected = {**chosen_goal, "skipped": selected["skipped"]}
+                elif chosen_rule is None and strategy_active and not strategy_no_op:
+                    selection_reason = "strategist"
                 elif chosen_rule is None and args.manager == "gemini" and manager_plan is not None:
                     selection_reason = "gemini"
                 elif chosen_rule is None:
                     selection_reason = "planner"
 
             actions = selected["actions"]
+            if selected.get("goal_id") not in {None, "no_goal"}:
+                active_goal = selected["goal_id"]
             emergency_category = selected.get("emergency_category")
             if emergency_category is not None and cycle is not None:
                 emergency_cooldowns[emergency_category] = (
@@ -811,6 +901,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                 result=result,
                 actions=selected.get("actions", []),
             )
+            latest_score = score
             score_record = make_score_record(
                 score,
                 state,
@@ -858,6 +949,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             "manager": args.manager,
             "manager_plan": manager_plan,
             "manager_plan_expires_cycle": manager_plan_expires_cycle,
+            "strategist": strategist_decision,
             "emergency_pending": _copy_pending(emergency_pending),
             "emergency_pending_expired": emergency_pending_expired,
             "emergency_cooldowns": emergency_cooldowns,
