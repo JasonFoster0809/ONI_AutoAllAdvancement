@@ -418,7 +418,16 @@ def explain_rules(
     missing_skills = [
         name for name in [skill, *required] if name not in executor_map
     ]
-    if missing_skills:
+    if executors is None:
+        selected = {
+            "rule_id": selected_rule["id"],
+            "priority": selected_rule["priority"],
+            "status": "matched",
+            "reason": "skill_preview_not_requested",
+            "then": dict(selected_rule["then"]),
+            "actions": [],
+        }
+    elif missing_skills:
         selected = {
             "rule_id": selected_rule["id"],
             "priority": selected_rule["priority"],

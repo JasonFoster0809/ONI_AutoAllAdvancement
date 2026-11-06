@@ -369,6 +369,25 @@ def test_highest_priority_matched_rule_is_selected():
     assert result["selected"]["status"] == "TODO_NOT_IMPLEMENTED"
 
 
+def test_explain_without_executors_does_not_report_known_skill_as_missing():
+    document = document_with(
+        {"op": "lt", "path": "dupes.0.calories_kcal", "value": 100},
+        skill="food_emergency",
+    )
+    result = explain_rules(
+        {"dupes": [{"calories_kcal": 50}]},
+        document=document,
+    )
+
+    assert result["selected"]["status"] == "matched"
+    assert result["selected"]["reason"] == "skill_preview_not_requested"
+    assert result["selected"]["then"] == {
+        "skill": "food_emergency",
+        "args": {},
+    }
+    assert result["selected"]["actions"] == []
+
+
 def test_cooldown_and_pending_prevent_duplicate_skill_calls():
     calls = []
     executor = lambda *_: calls.append("called") or []
@@ -424,3 +443,12 @@ def test_cli_validate_and_explain(tmp_path, capsys):
     result = json.loads(capsys.readouterr().out)
     assert result["phase"] == "early"
     assert result["reasons"][0]["status"] == "unknown"
+
+    state_path.write_text(
+        '{"dupes":[{"calories_kcal":50}],"building_list":[]}',
+        encoding="utf-8",
+    )
+    assert main(["--explain", "--state", str(state_path)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["selected"]["rule_id"] == "critical-dupe-hunger"
+    assert result["selected"]["reason"] == "skill_preview_not_requested"

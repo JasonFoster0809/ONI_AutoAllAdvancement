@@ -858,3 +858,31 @@ git check-ignore -v -- .env .env.local sample-key.json test.sav
 **Không chạy game, deploy, copy DLL, sửa save hoặc push.** Không có key/token
 hay save nào được thêm vào repo. Kết quả kiểm thử và thời gian ở trên là
 kiểm tra offline.
+
+## Giai đoạn 1 — Rule engine: xác minh và hiệu chỉnh CLI
+
+Rule engine dạng khai báo, `rules.yaml`, tích hợp agent và các test đã có
+trong repo, với phần lõi được commit ở `1c9cfbb` và rules giai đoạn sau ở
+`e591c05`. Khi xác minh lại, `--validate` trả `{"valid":true,"rules":9}`.
+Phát hiện thêm rằng `--explain` với rule khớp nhưng không được truyền executor
+đã báo nhầm `TODO_NOT_IMPLEMENTED`; CLI chỉ đang giải thích điều kiện, không
+được yêu cầu gọi skill. Đã đổi kết quả thành `skill_preview_not_requested`,
+vẫn giữ `TODO_NOT_IMPLEMENTED` khi executor map được cung cấp rõ ràng nhưng
+thiếu skill.
+
+Kiểm chứng sau hiệu chỉnh: `python -m pytest -q` — **130 passed**;
+`dotnet build` — **Build succeeded, 0 Warning(s), 0 Error(s)**;
+`python -m agent.rule_engine --validate` — **9 rules hợp lệ**.
+Không có API ONI mới nào được thêm; `README_API.md` không đổi. Các skill
+được khai báo trong rules đều có executor hiện tại. Những điều cần kiểm tra
+trong game vẫn gồm prefab có sẵn/unlocked, đủ vật liệu, và hiệu quả thực tế
+của các build plan; không có tên prefab mới được đoán ở lần hiệu chỉnh này.
+
+Kiểm tra an toàn trong game (chỉ dry-run; cần state/catalog hiện có):
+
+```powershell
+python -m agent.agent_main --dry-run --manager none --max-steps 1 --data-dir "$env:USERPROFILE\Documents\Klei\OxygenNotIncluded"
+```
+
+Chỉ đọc state/catalog và ghi log/JSONL; không gửi command khi dùng
+`--dry-run`. C# không đổi; không chạy game, deploy, copy DLL hoặc push.
