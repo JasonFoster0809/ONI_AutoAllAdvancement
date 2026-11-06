@@ -13,4 +13,11 @@
     <Reference Include="UnityEngine"><HintPath>$(OniDir)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(OniDir)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="decompiled\**" />
+    <Compile Remove="agent\**" />
+    <Compile Remove="tests\**" />
+    <Compile Remove="blueprints\**" />
+    <Compile Remove="logs\**" />
+  </ItemGroup>
 </Project>
