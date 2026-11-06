@@ -99,13 +99,14 @@ def _status(entry: Mapping[str, Any], state_item: Mapping[str, Any] | None) -> s
 
     requires_dlc = entry.get("requires_dlc", TODO)
     requires_rocket = entry.get("requires_rocket", TODO)
-    base_game = entry.get("base_game", TODO)
-    difficulty = entry.get("difficulty", TODO)
+    base_game_feasible = entry.get(
+        "base_game_feasible", entry.get("base_game", TODO)
+    )
     if requires_dlc is True:
         return "cần DLC"
     if requires_rocket is True:
         return "cần tên lửa"
-    if base_game is True and isinstance(difficulty, (int, float)):
+    if base_game_feasible is True:
         return "làm được ở base game"
     return "chưa rõ"
 
@@ -180,16 +181,28 @@ def _suggested_order(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         index, row = item
         if row.get("achieved") is True:
             return (0, 0.0, index)
-        if (
-            row.get("base_game") is True
-            and row.get("requires_rocket") is False
-            and isinstance(row.get("difficulty"), (int, float))
-        ):
-            difficulty = float(row["difficulty"])
-            return (1, difficulty, index)
+        base_game_feasible = row.get(
+            "base_game_feasible", row.get("base_game", TODO)
+        )
+        if base_game_feasible is True and row.get("requires_rocket") is False:
+            difficulty = row.get("difficulty")
+            score = (
+                float(difficulty)
+                if isinstance(difficulty, (int, float))
+                else float("inf")
+            )
+            return (1, score, index)
+        if base_game_feasible is True and row.get("requires_rocket") is True:
+            difficulty = row.get("difficulty")
+            score = (
+                float(difficulty)
+                if isinstance(difficulty, (int, float))
+                else float("inf")
+            )
+            return (2, score, index)
         if row.get("requires_dlc") is True:
-            return (3, float("inf"), index)
-        return (2, float("inf"), index)
+            return (4, float("inf"), index)
+        return (3, float("inf"), index)
 
     ordered = sorted(indexed, key=rank)
     result: list[dict[str, Any]] = []
@@ -236,7 +249,7 @@ def render_report(
         "requires_dlc",
         "requires_rocket",
         "requires_multiple_worlds",
-        "base_game",
+        "base_game_feasible",
         "difficulty",
         "mutually_exclusive",
         "progress",
@@ -257,7 +270,9 @@ def render_report(
             "requires_multiple_worlds": str(
                 row.get("requires_multiple_worlds", TODO)
             ),
-            "base_game": str(row.get("base_game", TODO)),
+            "base_game_feasible": str(
+                row.get("base_game_feasible", row.get("base_game", TODO))
+            ),
             "difficulty": str(row.get("difficulty", TODO)),
             "mutually_exclusive": str(row.get("mutually_exclusive", TODO)),
             "progress": " | ".join(row["progress"] or [])

@@ -218,13 +218,44 @@ and the non-empty strings returned by each requirement's `GetProgress`.
 The resulting `achievements` array contains `{id, name, achieved, progress}`,
 where `progress` is an array of requirement strings.
 
-The achievement snapshot confirms only the IDs, localized names, achieved
-flags, and runtime `GetProgress` text. It does not expose a static
-description, DLC/rocket/multi-world classification, difficulty, or
-mutual-exclusion metadata. Individual requirement implementations were not
-re-decompiled during the achievement-planning stage because the sandbox
-denied ILSpy access to `D:\Oxygen Not Included\OxygenNotIncluded_Data\Managed\mscorlib.dll`;
-those fields remain `TODO_VERIFY` in `agent/achievements_plan.yaml`.
+### Verified achievement plan data
+
+The static plan was verified against the user-provided decompiled source tree
+at `D:\OniAgent\decompiled` (not by copying source into the repository). The
+registry and restriction sources were:
+
+- `Db.cs`: constructs and registers `ColonyAchievements`.
+- `Database/ColonyAchievements.cs`: achievement IDs, requirement constructor
+  arguments, version-dependent requirement lists, and the explicit
+  `DlcManager` gates/required DLC IDs.
+- `Database/ColonyAchievement.cs`: `requiredDlcIds` and `forbiddenDlcIds`.
+- `Database/ColonyAchievementRequirement.cs` and
+  `ColonyAchievementStatus.cs`: requirement success/failure semantics and
+  the AND aggregation of each achievement's requirement checklist.
+- `STRINGS/COLONY_ACHIEVEMENTS.cs`: source descriptions and progress labels.
+- Requirement subclasses under `Database/`, including
+  `CycleNumber`, `MinimumMorale`, `NumberOfDupes`, `EstablishColonies`,
+  `CollectedArtifacts`, `CollectedSpaceArtifacts`, `NoFarmables`,
+  `AtLeastOneBuildingForEachDupe`, `SurvivedPrehistoricAsteroidImpact`,
+  `NoDuplicantsCanDie`, `LandOnAllWorlds`, and `MinnowRecruited`.
+
+The sources were inspected with targeted `Select-String` searches and bounded
+reads of the separate decompiled files; the combined
+`Assembly-CSharp.decompiled.cs` was not used. Constructor thresholds, listed
+IDs/tags, and explicit DLC IDs are recorded in
+`agent/achievements_plan.yaml`. The plan marks requirement data as verified
+only where supported by these sources. The game registry changes the
+`ReachedDistantPlanet` and `ReachedSpace` requirements when Expansion 1 is
+active; both variants are retained in the plan.
+
+The report classifies an entry as achieved only from state; otherwise it uses
+verified DLC, rocket, or base-game metadata. Missing state remains `chưa rõ`.
+`base_game_feasible` is populated from registry availability and explicit DLC
+restrictions, while `difficulty` and `mutually_exclusive` remain
+`TODO_VERIFY` because the inspected source does not establish those values.
+Rocket or multi-world requirements that cannot be established from the
+registered requirement types also remain `TODO_VERIFY`. These classifications
+are planning hints only and do not create planner goals or actions.
 
 ## Environment state API
 

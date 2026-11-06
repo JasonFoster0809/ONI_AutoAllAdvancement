@@ -15,8 +15,8 @@ def test_missing_achievement_fields_remain_unknown():
     assert rows[0]["name"] == "TODO_VERIFY"
     assert rows[0]["achieved"] is None
     assert rows[0]["category"] == "chưa rõ"
-    assert rows[0]["requirement"] == ""
-    assert rows[0]["requires_dlc"] == "TODO_VERIFY"
+    assert "cycle 200" in rows[0]["requirement"]
+    assert rows[0]["requires_dlc"] is False
     assert rows[0]["suggested_order"] == 1
 
 
@@ -40,8 +40,8 @@ def test_state_names_progress_and_achievements_are_merged_without_guessing():
     assert by_id["Thriving"]["category"] == "đã đạt"
     assert by_id["Thriving"]["suggested_order"] is None
     assert by_id["Thriving"]["progress"] == ["Progress text from state"]
-    assert by_id["ReachedSpace"]["category"] == "chưa rõ"
-    assert by_id["ReachedSpace"]["requires_rocket"] == "TODO_VERIFY"
+    assert by_id["ReachedSpace"]["category"] == "cần tên lửa"
+    assert by_id["ReachedSpace"]["requires_rocket"] is True
     unachieved_orders = [
         row["suggested_order"] for row in rows if row["achieved"] is not True
     ]
@@ -63,23 +63,25 @@ def test_non_boolean_achieved_and_malformed_progress_are_unknown():
     assert thriving["progress"] is None
 
 
-def test_report_has_required_categories_and_does_not_infer_game_requirements():
+def test_report_groups_verified_requirements_without_inferring_missing_state():
     state = {
         "achievements": [
             {"id": "Thriving", "name": "Observed title", "achieved": True},
             {"id": "ReachedSpace", "name": "Rocket title", "achieved": False},
+            {"id": "Survived100Cycles", "name": "Base title", "achieved": False},
+            {"id": "FirstTeleport", "name": "DLC title", "achieved": False},
         ]
     }
 
     report = render_report(state)
 
     assert "đã đạt: 1" in report
-    assert "làm được ở base game: 0" in report
-    assert "cần DLC: 0" in report
-    assert "cần tên lửa: 0" in report
-    assert "chưa rõ: 50" in report
+    assert "làm được ở base game: 1" in report
+    assert "cần DLC: 1" in report
+    assert "cần tên lửa: 1" in report
+    assert "chưa rõ: 47" in report
     assert "Observed title" in report
-    assert "TODO_VERIFY" in report
+    assert "base_game_feasible" in report
 
 
 def test_strategist_context_contains_only_goal_metadata_no_actions():
@@ -98,7 +100,7 @@ def test_strategist_context_contains_only_goal_metadata_no_actions():
     assert any(
         goal["id"] == "ReachedSpace"
         and goal["description"] == "State title"
-        and goal["status"] == "chưa rõ"
+        and goal["status"] == "cần tên lửa"
         for goal in goals
     )
 
@@ -109,14 +111,19 @@ def test_strategist_context_omits_achievements_missing_from_state():
     assert goals == []
 
 
-def test_plan_has_unique_ids_and_unverified_requirements_are_explicit():
+def test_plan_has_unique_ids_and_verified_requirements_for_all_observed_ids():
     plan = load_plan()
     ids = [entry["id"] for entry in plan["entries"]]
 
     assert len(ids) == 51
     assert len(ids) == len(set(ids))
-    assert plan["defaults"]["requirement_status"] == "TODO_VERIFY"
-    assert plan["suggested_order"]["status"] == "TODO_VERIFY"
+    assert all(entry["requirement_status"] == "verified" for entry in plan["entries"])
+    assert all(entry["requirement"] for entry in plan["entries"])
+    assert plan["suggested_order"]["status"] == "partially_verified"
+    assert plan["entries"][0]["requirement"].find("cycle 200") >= 0
+    assert next(
+        entry for entry in plan["entries"] if entry["id"] == "FirstTeleport"
+    )["required_dlc_ids"] == ["EXPANSION1_ID"]
 
 
 def test_verified_base_game_and_difficulty_sort_before_unverified_and_dlc():
@@ -124,27 +131,27 @@ def test_verified_base_game_and_difficulty_sort_before_unverified_and_dlc():
     plan["entries"] = [
         {
             "id": "dlc",
-            "base_game": False,
+            "base_game_feasible": False,
             "requires_dlc": True,
             "difficulty": 1,
         },
         {
             "id": "hard_base",
-            "base_game": True,
+            "base_game_feasible": True,
             "requires_dlc": False,
             "requires_rocket": False,
             "difficulty": 5,
         },
         {
             "id": "rocket",
-            "base_game": True,
+            "base_game_feasible": True,
             "requires_dlc": False,
             "requires_rocket": True,
             "difficulty": 2,
         },
         {
             "id": "easy_base",
-            "base_game": True,
+            "base_game_feasible": True,
             "requires_dlc": False,
             "requires_rocket": False,
             "difficulty": 1,
@@ -169,6 +176,23 @@ def test_verified_base_game_and_difficulty_sort_before_unverified_and_dlc():
     ]
     assert rows[2]["category"] == "cần tên lửa"
     assert rows[-1]["category"] == "cần DLC"
+
+
+def test_base_game_classification_does_not_require_a_difficulty_guess():
+    plan = load_plan()
+    state = {
+        "achievements": [
+            {"id": "Survived100Cycles", "name": "Base", "achieved": False}
+        ]
+    }
+
+    row = next(
+        row for row in achievement_rows(state, plan)
+        if row["id"] == "Survived100Cycles"
+    )
+
+    assert row["category"] == "làm được ở base game"
+    assert row["difficulty"] == "TODO_VERIFY"
 
 
 def test_unknown_state_achievements_are_included_with_todo_metadata():

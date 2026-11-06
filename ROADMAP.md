@@ -71,9 +71,11 @@ before relying on automation; no game was launched for this work.
 - `agent/achievements_plan.py` reports the 51 achievement IDs observed in
   `oni_state.json`, merges live names/progress/completion state, and exposes
   advisory context to the strategist only. It does not issue actions or make
-  achievement IDs selectable by the planner. Per-achievement requirements,
-  DLC/rocket/multi-world flags, difficulty, and exclusions remain
-  **TODO_VERIFY** where not verified from game code.
+  achievement IDs selectable by the planner. Requirements and explicit DLC
+  gates are verified against the separate local decompiled source files.
+  Difficulty and mutual exclusions remain **TODO_VERIFY**; rocket and
+  multi-world flags are also left unknown when the registered requirement
+  does not establish them.
 - `agent/diagnostics.py` summarizes trends, empty Deoxidizer stores, repeated
   blocked builds, and stagnant research from available logs and current
   state. Old log fields may be missing; it reports unknown instead of

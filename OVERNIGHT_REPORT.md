@@ -1084,50 +1084,43 @@ python -m pytest -q agent/skills_generated/test_<skill_id>.py
 
 ## Giai đoạn 6 — Kế hoạch thành tựu (read-only)
 
-**XONG — bảng state và context strategist; xác minh yêu cầu game bị giới
-hạn sandbox nên metadata chưa xác minh được.** `agent/achievements_plan.yaml`
-liệt kê 51 ID quan sát trực tiếp từ `oni_state.json`. `agent/achievements_plan.py`
-đọc plan JSON-compatible YAML, hợp nhất name/progress/achieved từ state,
-in bảng bằng `python -m agent.achievements_plan --report`, và tạo context
-advisory cho strategist. Achievement IDs không được thêm vào planner
-allowlist; module không tạo hay gửi action.
+**XONG — requirement constructors và DLC gates đã được xác minh từ source
+decompile cục bộ do người dùng cung cấp.** `agent/achievements_plan.yaml`
+liệt kê 51 ID quan sát từ `oni_state.json`; mỗi mục có requirement và trạng
+thái xác minh. Nguồn là các file riêng dưới `D:\OniAgent\decompiled`, không
+phải file gộp `Assembly-CSharp.decompiled.cs`; không chép mã game vào repo.
 
-`Mod.cs` xác nhận dùng `Db.Get().ColonyAchievements.resources`,
-`achievement.Id`, `achievement.Name`, `status.success` và gọi `GetProgress`
-cho từng requirement. Tuy nhiên, việc decompile
-`ColonyAchievementRequirement` và `ColonyAchievement` bằng `ilspycmd` bị
-sandbox chặn:
-`System.UnauthorizedAccessException: Access to the path 'D:\Oxygen Not Included\OxygenNotIncluded_Data\Managed\mscorlib.dll' is denied.`
-Không thử lại hoặc tìm cách vượt giới hạn này. Vì vậy, ở cả 51 achievement,
-các trường `description`, `requirement`,
-`requires_dlc`, `requires_rocket`, `requires_multiple_worlds`, `base_game`,
-`difficulty` và `mutually_exclusive` được đánh dấu `TODO_VERIFY` (nội dung
-requirement để trống). Thứ tự gợi ý tạm giữ thứ tự trong state cho đến khi
-độ khó và phân loại base-game/DLC được xác minh; không suy luận điều kiện
-từ tên thành tựu.
+Đã xác minh các ngưỡng, requirement list và DLC ID có trong
+`Database/ColonyAchievements.cs`, `Database/ColonyAchievement.cs`,
+`Database/ColonyAchievementRequirement.cs`, `ColonyAchievementStatus.cs`,
+`Db.cs`, `STRINGS/COLONY_ACHIEVEMENTS.cs` và các requirement subclass liên
+quan. `ReachedDistantPlanet` và `ReachedSpace` giữ rõ các nhánh phụ thuộc
+Expansion 1. DLC flag/ID được ghi theo registration và
+`requiredDlcIds`; `base_game_feasible` được suy ra từ đăng ký không bị gate
+DLC. Không suy độ khó hay loại trừ nhau: hai trường đó vẫn là
+`TODO_VERIFY`. Cờ rocket/multiple-world chỉ được ghi khi constructor/type
+cho thấy điều kiện; phần chưa đủ bằng chứng còn `TODO_VERIFY`.
 
-Nếu state thiếu thành tựu hoặc trường dữ liệu, kết quả là `chưa rõ`, không
-coi như chưa đạt. ID mới xuất hiện trong state cũng được hiển thị với metadata
-TODO. Strategist chỉ nhận context tham khảo; allowlist vẫn là các goal của
-planner hiện tại.
+`agent/achievements_plan.py --report` vẫn hợp nhất state live và chỉ đưa
+context tư vấn cho strategist; achievement không thành planner goal/action.
+State thiếu vẫn là `chưa rõ`. Snapshot cục bộ báo cáo được 51 mục, nhưng đã
+cũ khoảng 5.4 giờ; số đếm report không được xem là trạng thái mới của colony.
 
 **Kiểm chứng:** `python -m pytest -q tests/test_achievements_plan.py` —
-**12 passed**; `python -m pytest -q` — **185 passed**;
-`python -m agent.rule_engine --validate`
-— **9 rules hợp lệ**. `dotnet build` không chạy vì không sửa C#. Không chạy
-game/deploy, không copy DLL, không push. Báo cáo CLI chạy được với UTF-8;
-state trên máy có 51 mục và 2 mục achieved nhưng cũ khoảng 4,6 giờ tại thời
-điểm kiểm tra, nên các số đếm đó chỉ xác nhận format/report, không phải
-snapshot mới của colony.
+**13 passed**; `python -m pytest -q` — **186 passed**. Lệnh `--report` chạy
+thành công: 51 mục; snapshot cũ có 2 achieved, 31 base-game, 16 DLC, 2 rocket,
+0 chưa rõ. `git diff --check` sạch. Không chạy `dotnet build` vì C# không
+đổi. Chỉ kiểm thử/đọc state offline; không chạy game/deploy, không copy DLL,
+không push.
 
-Files thêm/sửa: `agent/achievements_plan.py`,
-`agent/achievements_plan.yaml`, `agent/strategist.py`,
-`agent/agent_main.py`, `tests/test_achievements_plan.py`, `tests/test_strategist.py`,
-`ARCHITECTURE.md`, `ROADMAP.md` và báo cáo này.
+Files sửa trong phần bổ sung: `agent/achievements_plan.yaml`,
+`agent/achievements_plan.py`, `tests/test_achievements_plan.py`,
+`README_API.md`, `ROADMAP.md` và báo cáo này.
 
 Lệnh PowerShell kiểm chứng:
 
 ```powershell
 python -m agent.achievements_plan --report --data-dir "$env:USERPROFILE\Documents\Klei\OxygenNotIncluded"
 python -m pytest -q tests/test_achievements_plan.py
+python -m pytest -q
 ```
