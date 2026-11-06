@@ -506,6 +506,329 @@ def build_power_basic(
     return SkillPlan(actions, ["basic_power_layout_not_tested_in_game"])
 
 
+_FOOD_BUILDING_IDS = frozenset(
+    {"PlanterBox", "FarmTile", "CookingStation", "RationBox"}
+)
+_BASIC_SURVIVAL_FOOD_KCAL_PER_DUPE = 1000.0
+_BASIC_SURVIVAL_MAX_ACTIONS = 12
+
+
+def _basic_survival_oxygen_needed(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+) -> bool | None:
+    dupes = state.get("dupes")
+    buildings = state.get("building_list")
+    if (
+        not isinstance(dupes, list)
+        or any(not isinstance(dupe, Mapping) for dupe in dupes)
+        or not isinstance(buildings, list)
+        or any(
+            not isinstance(item, Mapping)
+            or "id" not in item
+            or "state" not in item
+            for item in buildings
+        )
+    ):
+        return None
+    try:
+        deoxidizer = _catalog_building(catalog, "MineralDeoxidizer")
+    except SkillPlanningError:
+        return False
+    existing = [
+        item
+        for item in buildings
+        if isinstance(item, Mapping)
+        and item.get("id") == deoxidizer.get("id")
+        and item.get("state") in {"built", "under_construction"}
+    ]
+    shortage = max(0, len(dupes) - len(existing))
+    if shortage == 0:
+        return False
+
+    built = [item for item in existing if item.get("state") == "built"]
+    if built:
+        masses = [
+            _element_mass(item.get("stored"), "Algae")
+            if "stored" in item
+            else None
+            for item in built
+        ]
+        if any(mass is None for mass in masses):
+            return None
+        return sum(mass for mass in masses if mass is not None) > 0
+
+    resources = state.get("resources")
+    materials = resources.get("materials") if isinstance(resources, Mapping) else None
+    if not isinstance(materials, Mapping) or "Algae" not in materials:
+        return None
+    algae = _emergency_number(materials.get("Algae"))
+    return algae > 0 if algae is not None and algae >= 0 else None
+
+
+def _basic_survival_power_needed(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+) -> bool | None:
+    buildings = state.get("building_list")
+    if not isinstance(buildings, list) or any(
+        not isinstance(item, Mapping) for item in buildings
+    ):
+        return None
+    if not buildings:
+        return False
+    if any(not isinstance(item.get("powered"), bool) for item in buildings):
+        return None
+    unpowered = [item for item in buildings if item.get("powered") is False]
+    if not unpowered:
+        return False
+    if any("state" not in item for item in unpowered):
+        return None
+    needs_power = any(item.get("state") == "built" for item in unpowered)
+    if not needs_power:
+        return False
+    power = state.get("power")
+    if not isinstance(power, Mapping):
+        return None
+    potential = _emergency_number(power.get("watts_potential"))
+    generated = _emergency_number(power.get("watts_generated"))
+    if potential is None or generated is None or potential < 0 or generated < 0:
+        return None
+    if potential > 0 or generated > 0:
+        return False
+    if any(
+        isinstance(item, Mapping)
+        and item.get("id") == "ManualGenerator"
+        and item.get("state") in {"built", "under_construction"}
+        for item in buildings
+    ):
+        return False
+    try:
+        for building_id in ("ManualGenerator", "Wire", "Battery"):
+            _catalog_building(catalog, building_id)
+    except SkillPlanningError:
+        return False
+    return True
+
+
+def _basic_survival_food_research(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+    food_kcal_per_dupe: float,
+) -> tuple[dict[str, Any] | None, str | None]:
+    dupes = state.get("dupes")
+    resources = state.get("resources")
+    if not isinstance(dupes, list) or not dupes or not isinstance(resources, Mapping):
+        return None, "food_shortage_unknown"
+    food_kcal = _emergency_number(resources.get("food_kcal"))
+    if food_kcal is None:
+        return None, "food_shortage_unknown"
+    if food_kcal >= len(dupes) * food_kcal_per_dupe:
+        return None, None
+
+    research = state.get("research")
+    techs = research.get("techs") if isinstance(research, Mapping) else None
+    if not isinstance(techs, list):
+        return None, "food_research_unknown"
+    catalog_by_id = {
+        item.get("id"): item
+        for item in catalog
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+    }
+    known_food_ids = {
+        building_id
+        for building_id in _FOOD_BUILDING_IDS
+        if building_id in catalog_by_id
+    }
+    if not known_food_ids:
+        return None, "food_catalog_unknown"
+    if any(
+        not isinstance(catalog_by_id[building_id].get("unlocked"), bool)
+        for building_id in known_food_ids
+    ):
+        return None, "food_catalog_unknown"
+    locked_food_ids = {
+        building_id
+        for building_id in known_food_ids
+        if catalog_by_id[building_id].get("unlocked") is False
+    }
+    if not locked_food_ids:
+        return None, "no_locked_food_building"
+    for tech in techs:
+        if not isinstance(tech, Mapping):
+            continue
+        tech_id = tech.get("id")
+        unlocks = tech.get("unlocks")
+        if (
+            isinstance(tech_id, str)
+            and tech.get("complete") is False
+            and tech.get("ready") is True
+            and isinstance(unlocks, list)
+            and any(building_id in unlocks for building_id in locked_food_ids)
+        ):
+            return {"type": "set_research", "tech": tech_id}, None
+    return None, "food_tech_not_ready"
+
+
+def basic_survival_needed(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+    food_kcal_per_dupe: float = _BASIC_SURVIVAL_FOOD_KCAL_PER_DUPE,
+) -> bool | None:
+    """Return whether a verified basic-survival shortage has a safe response."""
+    signals = [
+        _basic_survival_oxygen_needed(state, catalog),
+        _basic_survival_power_needed(state, catalog),
+    ]
+    food_action, food_reason = _basic_survival_food_research(
+        state, catalog, food_kcal_per_dupe
+    )
+    if food_action is not None:
+        return True
+    if food_reason in {
+        "food_shortage_unknown",
+        "food_research_unknown",
+        "food_catalog_unknown",
+    }:
+        signals.append(None)
+    else:
+        signals.append(False)
+    if any(signal is True for signal in signals):
+        return True
+    return None if any(signal is None for signal in signals) else False
+
+
+def build_basic_survival(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+    food_kcal_per_dupe: float = _BASIC_SURVIVAL_FOOD_KCAL_PER_DUPE,
+) -> SkillPlan:
+    """Plan bounded oxygen, power, and food-research actions from known data."""
+    actions: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    dupes = _live_dupes(state)
+    buildings = _known_buildings(state)
+
+    try:
+        deoxidizer = _catalog_building(catalog, "MineralDeoxidizer")
+        existing = [
+            item
+            for item in buildings
+            if item.get("id") == deoxidizer.get("id")
+            and item.get("state") in {"built", "under_construction"}
+        ]
+        shortage = max(0, len(dupes) - len(existing))
+        built = [item for item in existing if item.get("state") == "built"]
+        if shortage and built:
+            algae_masses = [
+                _element_mass(item.get("stored"), "Algae")
+                if "stored" in item
+                else None
+                for item in built
+            ]
+            if any(mass is None for mass in algae_masses):
+                warnings.append("algae_stock_unknown_no_deoxidizer_build")
+                shortage = 0
+            elif sum(mass for mass in algae_masses if mass is not None) <= 0:
+                warnings.append("algae_stock_empty_no_deoxidizer_build")
+                shortage = 0
+        elif shortage:
+            resources = state.get("resources")
+            materials = resources.get("materials") if isinstance(resources, Mapping) else None
+            if not isinstance(materials, Mapping) or "Algae" not in materials:
+                warnings.append("algae_stock_unknown_no_deoxidizer_build")
+                shortage = 0
+            else:
+                algae = _emergency_number(materials.get("Algae"))
+                if algae is None:
+                    warnings.append("algae_stock_unknown_no_deoxidizer_build")
+                    shortage = 0
+                elif algae <= 0:
+                    warnings.append("algae_stock_empty_no_deoxidizer_build")
+                    shortage = 0
+        if shortage:
+            rows, origin, _ = _map_context(state)
+            reserved = _reserved_building_cells(state, catalog)
+            stock_budget = _emergency_stock_budget(state)
+            placed = 0
+            for dupe in dupes:
+                if placed >= shortage or len(actions) >= _BASIC_SURVIVAL_MAX_ACTIONS:
+                    break
+                center = None
+                room_x, room_y = dupe.get("room_x"), dupe.get("room_y")
+                if room_x is None or room_y is None:
+                    room_x, room_y = dupe.get("x"), dupe.get("y")
+                if (
+                    isinstance(room_x, int)
+                    and not isinstance(room_x, bool)
+                    and isinstance(room_y, int)
+                    and not isinstance(room_y, bool)
+                ):
+                    center = (room_x, room_y)
+                if center is None:
+                    warnings.append("dupe_room_position_unknown")
+                    continue
+                try:
+                    _, _, room_cells = _room_cells(state, center)
+                    action = _emergency_build_action(
+                        state,
+                        catalog,
+                        "MineralDeoxidizer",
+                        center,
+                        rows,
+                        origin,
+                        room_cells,
+                        reserved,
+                        stock_budget,
+                    )
+                except SkillPlanningError as error:
+                    warnings.append(f"oxygen_build_skipped:{error.reason}")
+                    continue
+                actions.append(action)
+                placed += 1
+            if placed < shortage:
+                warnings.append("oxygen_action_limit_or_room_unavailable")
+            warnings.append(
+                "assumption_one_MineralDeoxidizer_per_dupe_TODO_VERIFY"
+            )
+            warnings.append("deoxidizer_Algae_consumption_rate_TODO_VERIFY")
+    except SkillPlanningError as error:
+        warnings.append(f"oxygen_status_unknown:{error.reason}")
+
+    if len(actions) < _BASIC_SURVIVAL_MAX_ACTIONS:
+        power_needed = _basic_survival_power_needed(state, catalog)
+        if power_needed is True:
+            try:
+                power_plan = build_power_basic(state, catalog)
+            except SkillPlanningError as error:
+                warnings.append(f"power_build_skipped:{error.reason}")
+            else:
+                if len(actions) + len(power_plan.actions) <= _BASIC_SURVIVAL_MAX_ACTIONS:
+                    actions.extend(power_plan.actions)
+                    warnings.extend(power_plan.warnings)
+                    warnings.append("power_output_and_layout_values_TODO_VERIFY")
+                else:
+                    warnings.append("power_setup_exceeds_action_limit")
+        elif power_needed is None:
+            warnings.append("power_status_unknown")
+
+    if len(actions) < _BASIC_SURVIVAL_MAX_ACTIONS:
+        food_action, food_warning = _basic_survival_food_research(
+            state, catalog, food_kcal_per_dupe
+        )
+        if food_action is not None:
+            actions.append(food_action)
+            warnings.append(
+                "food_kcal_per_dupe_threshold_TODO_VERIFY"
+            )
+        elif food_warning is not None:
+            warnings.append(food_warning)
+    if len(actions) > _BASIC_SURVIVAL_MAX_ACTIONS:
+        actions = actions[:_BASIC_SURVIVAL_MAX_ACTIONS]
+        warnings.append("action_limit_12")
+    return SkillPlan(actions, list(dict.fromkeys(warnings)))
+
+
 def build_water_setup(
     state: Mapping[str, Any],
     catalog: Sequence[Mapping[str, Any]],

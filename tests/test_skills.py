@@ -5,6 +5,8 @@ import pytest
 
 from agent.skills import (
     SkillPlanningError,
+    basic_survival_needed,
+    build_basic_survival,
     build_food_basic,
     build_mess_area,
     build_oxygen_setup,
@@ -291,6 +293,110 @@ def test_build_power_basic_checks_unlocks_materials_and_map_support():
     blocked["world"]["map"] = ["X" * 41 for _ in range(41)]
     with pytest.raises(SkillPlanningError, match="no_valid_placement"):
         build_power_basic(blocked, load_construction_catalog())
+
+
+def test_basic_survival_builds_deoxidizer_per_dupe_inside_dupe_room():
+    state = supported_construction_state()
+    state["dupes"] = [
+        {"name": "A", "x": 0, "y": -19},
+        {"name": "B", "x": 1, "y": -19},
+    ]
+    state["resources"]["materials"]["Algae"] = 1000
+    plan = build_basic_survival(state, load_construction_catalog())
+
+    oxygen_actions = [
+        action for action in plan.actions if action["id"] == "MineralDeoxidizer"
+    ]
+    assert len(oxygen_actions) == 2
+    assert all(action["type"] == "build" for action in oxygen_actions)
+    assert all(action["orientation"] == "Neutral" for action in oxygen_actions)
+    assert len({(action["x"], action["y"]) for action in oxygen_actions}) == 2
+    assert "assumption_one_MineralDeoxidizer_per_dupe_TODO_VERIFY" in plan.warnings
+    assert len(plan.actions) <= 12
+
+
+def test_basic_survival_does_not_build_when_deoxidizer_algae_is_unknown_or_empty():
+    state = supported_construction_state()
+    state["dupes"] = [{"name": "A", "x": 0, "y": -19}, {"name": "B", "x": 1, "y": -19}]
+    state["building_list"] = [
+        {"id": "MineralDeoxidizer", "state": "built", "x": 2, "y": -19}
+    ]
+    state["resources"]["materials"]["Algae"] = 1000
+
+    unknown = build_basic_survival(state, load_construction_catalog())
+    assert not any(action["id"] == "MineralDeoxidizer" for action in unknown.actions)
+    assert "algae_stock_unknown_no_deoxidizer_build" in unknown.warnings
+    assert basic_survival_needed(state, load_construction_catalog()) is None
+
+    state["building_list"][0]["stored"] = []
+    empty = build_basic_survival(state, load_construction_catalog())
+    assert not any(action["id"] == "MineralDeoxidizer" for action in empty.actions)
+    assert "algae_stock_empty_no_deoxidizer_build" in empty.warnings
+
+
+def test_basic_survival_power_plan_requires_unpowered_consumer_and_known_no_source():
+    state = supported_construction_state()
+    state["dupes"] = []
+    state["building_list"] = [
+        {"id": "ConsumerFixture", "state": "built", "powered": False}
+    ]
+    state["power"] = {"watts_generated": 0, "watts_potential": 0}
+    plan = build_basic_survival(state, load_construction_catalog())
+
+    assert [action["id"] for action in plan.actions[:2]] == [
+        "ManualGenerator",
+        "Battery",
+    ]
+    assert len([action for action in plan.actions if action["id"] == "Wire"]) == 5
+    assert "power_output_and_layout_values_TODO_VERIFY" in plan.warnings
+    assert len(plan.actions) <= 12
+
+    del state["power"]
+    unknown = build_basic_survival(state, load_construction_catalog())
+    assert unknown.actions == []
+    assert "power_status_unknown" in unknown.warnings
+
+    state["power"] = {"watts_generated": 0, "watts_potential": 0}
+    del state["building_list"][0]["powered"]
+    unknown_consumer = build_basic_survival(state, load_construction_catalog())
+    assert unknown_consumer.actions == []
+    assert "power_status_unknown" in unknown_consumer.warnings
+
+
+def test_basic_survival_food_only_selects_ready_research_for_catalog_unlock():
+    state = supported_construction_state()
+    state["dupes"] = [{"name": "A"}]
+    state["building_list"] = [
+        {
+            "id": "MineralDeoxidizer",
+            "state": "built",
+            "stored": [{"element": "Algae", "kg": 10}],
+        }
+    ]
+    state["resources"]["food_kcal"] = 0
+    state["research"] = {
+        "techs": [
+            {
+                "id": "FixtureFoodTech",
+                "complete": False,
+                "ready": True,
+                "unlocks": ["PlanterBox"],
+            }
+        ]
+    }
+    catalog = load_construction_catalog()
+    catalog.append(building("PlanterBox", unlocked=False))
+
+    plan = build_basic_survival(state, catalog)
+
+    assert plan.actions == [{"type": "set_research", "tech": "FixtureFoodTech"}]
+    assert all(action["type"] != "build" for action in plan.actions)
+    assert "food_kcal_per_dupe_threshold_TODO_VERIFY" in plan.warnings
+
+    missing_food_catalog = [
+        item for item in catalog if item.get("id") != "PlanterBox"
+    ]
+    assert basic_survival_needed(state, missing_food_catalog) is None
 
 
 def test_build_water_setup_places_unlocked_pump_near_liquid_and_wash_basin():

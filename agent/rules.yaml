@@ -6,6 +6,15 @@
   ],
   "rules": [
     {
+      "id": "basic-survival-shortage",
+      "priority": 90,
+      "when": {"op": "basic_survival_needed"},
+      "then": {"skill": "build_basic_survival", "args": {}},
+      "cooldown_cycles": 2,
+      "pending": 2,
+      "requires": ["build_basic_survival"]
+    },
+    {
       "id": "low-oxygen-setup",
       "priority": 100,
       "when": {"op": "for", "reads": 3, "condition": {"op": "lt", "path": "environment.oxygen_avg_g", "value": 50}},

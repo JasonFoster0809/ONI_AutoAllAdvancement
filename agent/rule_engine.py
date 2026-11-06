@@ -10,6 +10,8 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from .skills import basic_survival_needed
+
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_RULES_PATH = Path(__file__).with_name("rules.yaml")
@@ -82,6 +84,8 @@ def _validate_condition(condition: Any, location: str) -> None:
     if operator == "is_null":
         if not isinstance(condition.get("path"), str) or not condition["path"]:
             raise RuleValidationError(f"{location}.path must be a non-empty string")
+        return
+    if operator == "basic_survival_needed":
         return
     if operator == "any_item":
         if not isinstance(condition.get("path"), str) or not condition["path"]:
@@ -230,6 +234,8 @@ def _evaluate(
     condition: Mapping[str, Any],
     state: Mapping[str, Any],
     history: Sequence[Mapping[str, Any]],
+    catalog: Sequence[Mapping[str, Any]] = (),
+    food_kcal_per_dupe: float = 1000.0,
 ) -> bool | None:
     operator = condition["op"]
     if operator in OPERATORS:
@@ -302,6 +308,8 @@ def _evaluate(
     if operator == "is_null":
         found, value = _path_value(state, condition["path"])
         return value is None if found else UNKNOWN
+    if operator == "basic_survival_needed":
+        return basic_survival_needed(state, catalog, food_kcal_per_dupe)
     if operator == "any_item":
         found, items = _path_value(state, condition["path"])
         if not found or not isinstance(items, list):
@@ -309,7 +317,7 @@ def _evaluate(
         if any(not isinstance(item, Mapping) for item in items):
             return UNKNOWN
         results = [
-            _evaluate(condition["where"], item, ())
+            _evaluate(condition["where"], item, (), catalog, food_kcal_per_dupe)
             for item in items
         ]
         if any(result is True for result in results):
@@ -320,23 +328,33 @@ def _evaluate(
         if len(history) < reads:
             return UNKNOWN
         results = [
-            _evaluate(condition["condition"], sample, ())
+            _evaluate(
+                condition["condition"], sample, (), catalog, food_kcal_per_dupe
+            )
             for sample in history[-reads:]
         ]
         if any(result is False for result in results):
             return False
         return True if all(result is True for result in results) else UNKNOWN
     if operator == "all":
-        results = [_evaluate(item, state, history) for item in condition["conditions"]]
+        results = [
+            _evaluate(item, state, history, catalog, food_kcal_per_dupe)
+            for item in condition["conditions"]
+        ]
         if any(result is False for result in results):
             return False
         return True if all(result is True for result in results) else UNKNOWN
     if operator == "any":
-        results = [_evaluate(item, state, history) for item in condition["conditions"]]
+        results = [
+            _evaluate(item, state, history, catalog, food_kcal_per_dupe)
+            for item in condition["conditions"]
+        ]
         if any(result is True for result in results):
             return True
         return False if all(result is False for result in results) else UNKNOWN
-    result = _evaluate(condition["condition"], state, history)
+    result = _evaluate(
+        condition["condition"], state, history, catalog, food_kcal_per_dupe
+    )
     return not result if result is not None else UNKNOWN
 
 
@@ -359,6 +377,7 @@ def explain_rules(
     pending: Mapping[str, Any] | None = None,
     cooldowns: Mapping[str, int] | None = None,
     executors: Mapping[str, RuleExecutor] | None = None,
+    food_kcal_per_dupe: float = 1000.0,
 ) -> dict[str, Any]:
     """Return per-rule decision reasons without executing skill plans."""
     rules_document = validate_rules(document) if document is not None else load_rules()
@@ -371,7 +390,9 @@ def explain_rules(
         key=lambda item: (-item[1]["priority"], item[0]),
     )
     for _, rule in ordered:
-        condition = _evaluate(rule["when"], state, history)
+        condition = _evaluate(
+            rule["when"], state, history, catalog, food_kcal_per_dupe
+        )
         if condition is None:
             status, reason = "unknown", "condition_unknown"
         elif not condition:

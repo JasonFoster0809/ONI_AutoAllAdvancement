@@ -8,6 +8,12 @@
   "oxygen_min_g": 50.0,
   "oxygen_consecutive_readings": 3,
   "emergency_food_kcal_per_dupe": 1000.0,
+  "basic_survival_food_kcal_per_dupe": 1000.0,
+  "basic_survival_notes": {
+    "deoxidizer_per_dupe": "TODO_VERIFY; conservative agent policy assumption",
+    "food_kcal_per_dupe": "TODO_VERIFY; agent policy threshold, not verified consumption",
+    "power_output_and_layout": "TODO_VERIFY; electrical sizing and layout are not verified"
+  },
   "emergency_max_actions_per_turn": 12,
   "emergency_cooldown_cycles": 1,
   "emergency_pending_cycles": 2,

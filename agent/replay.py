@@ -99,6 +99,9 @@ def replay_log(
             pending=pending,
             cooldowns=cooldowns,
             executors=agent_main._rule_skill_executors(config),
+            food_kcal_per_dupe=config[
+                "basic_survival_food_kcal_per_dupe"
+            ],
         )
         selected = decision.get("selected")
         replayed_rule = selected.get("rule_id") if isinstance(selected, Mapping) else None

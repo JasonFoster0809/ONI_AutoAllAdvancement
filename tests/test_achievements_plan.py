@@ -177,14 +177,23 @@ def test_capability_groups_are_mapped_to_requirement_backed_achievements():
         "rooms",
         "ranching",
         "power",
+        "survival",
+        "oxygen",
     }.issubset(groups)
+    assert groups["survival"]["agent_support"] == "partial"
+    assert groups["oxygen"]["agent_support"] == "partial"
+    assert groups["power"]["agent_support"] == "partial"
     assert "EatCookedFood" in groups["cooking"]["achievement_ids"]
     assert "AutomateABuilding" in groups["automation"]["achievement_ids"]
     assert "Build4NatureReserves" in groups["rooms"]["achievement_ids"]
     assert "TameAllBasicCritters" in groups["ranching"]["achievement_ids"]
     assert "Generate240000kJClean" in groups["power"]["achievement_ids"]
     assert all(group["requirement_evidence"] for group in groups.values())
-    assert all(group["agent_support"] == "TODO_VERIFY" for group in groups.values())
+    assert all(
+        group["agent_support"] == "TODO_VERIFY"
+        for group_id, group in groups.items()
+        if group_id not in {"survival", "oxygen", "power"}
+    )
 
 
 def test_next_pursuit_uses_lowest_unfinished_tier_and_skips_conflicts():

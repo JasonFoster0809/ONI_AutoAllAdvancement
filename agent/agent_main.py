@@ -47,6 +47,7 @@ from .skills import (
     SkillPlan,
     SkillPlanningError,
     build_barracks,
+    build_basic_survival,
     build_food_basic,
     build_mess_area,
     build_oxygen_setup,
@@ -74,6 +75,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "oxygen_min_g": 50.0,
     "oxygen_consecutive_readings": 3,
     "emergency_food_kcal_per_dupe": 1000.0,
+    "basic_survival_food_kcal_per_dupe": 1000.0,
+    "basic_survival_notes": {
+        "deoxidizer_per_dupe": "TODO_VERIFY; conservative agent policy assumption",
+        "food_kcal_per_dupe": "TODO_VERIFY; agent policy threshold, not verified consumption",
+        "power_output_and_layout": "TODO_VERIFY; electrical sizing and layout are not verified",
+    },
     "emergency_max_actions_per_turn": 12,
     "emergency_cooldown_cycles": 1,
     "emergency_pending_cycles": 2,
@@ -137,6 +144,16 @@ def load_agent_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
         or food_kcal_per_dupe < 0
     ):
         raise ValueError("emergency_food_kcal_per_dupe must be a finite non-negative number")
+    basic_survival_food_kcal = config["basic_survival_food_kcal_per_dupe"]
+    if (
+        isinstance(basic_survival_food_kcal, bool)
+        or not isinstance(basic_survival_food_kcal, (int, float))
+        or not math.isfinite(basic_survival_food_kcal)
+        or basic_survival_food_kcal < 0
+    ):
+        raise ValueError(
+            "basic_survival_food_kcal_per_dupe must be a finite non-negative number"
+        )
     for key in ("emergency_max_actions_per_turn", "emergency_cooldown_cycles", "emergency_pending_cycles"):
         value = config[key]
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -174,11 +191,17 @@ def _rule_replay_state(state: Mapping[str, Any]) -> dict[str, Any]:
             for key in ("food_kcal", "materials")
             if key in resources
         }
+    research = state.get("research")
+    if isinstance(research, Mapping) and "techs" in research:
+        snapshot["research"] = {"techs": research["techs"]}
+    power = state.get("power")
+    if isinstance(power, Mapping):
+        snapshot["power"] = dict(power)
     dupes = state.get("dupes")
     if isinstance(dupes, list):
         dupe_fields = (
             "name", "x", "y", "calories_kcal", "stress",
-            "job_priorities", "room_type", "bed_x", "bed_y",
+            "job_priorities", "room_type", "bed_x", "bed_y", "room_x", "room_y",
         )
         snapshot["dupes"] = [
             {key: dupe[key] for key in dupe_fields if key in dupe}
@@ -188,7 +211,7 @@ def _rule_replay_state(state: Mapping[str, Any]) -> dict[str, Any]:
         ]
     buildings = state.get("building_list")
     if isinstance(buildings, list):
-        building_fields = ("id", "x", "y", "state", "stored")
+        building_fields = ("id", "x", "y", "state", "stored", "powered")
         snapshot["building_list"] = [
             {key: building[key] for key in building_fields if key in building}
             if isinstance(building, Mapping)
@@ -349,6 +372,18 @@ def _rule_skill_executors(config: Mapping[str, Any]) -> dict[str, Any]:
         _args: Mapping[str, Any],
     ) -> list[dict[str, Any]]:
         try:
+            if skill_name == "build_basic_survival":
+                plan = skill(
+                    state,
+                    catalog,
+                    config.get(
+                        "basic_survival_food_kcal_per_dupe",
+                        DEFAULT_CONFIG["basic_survival_food_kcal_per_dupe"],
+                    ),
+                )
+                for warning in plan.warnings:
+                    LOGGER.warning("Skill %s: %s", skill_name, warning)
+                return list(plan.actions)
             if skill_name == "build_barracks":
                 actions = skill(
                     state,
@@ -375,6 +410,7 @@ def _rule_skill_executors(config: Mapping[str, Any]) -> dict[str, Any]:
             return []
 
     skills = {
+        "build_basic_survival": build_basic_survival,
         "build_barracks": build_barracks,
         "build_oxygen_setup": build_oxygen_setup,
         "build_mess_area": build_mess_area,
@@ -687,6 +723,9 @@ def run(argv: Sequence[str] | None = None) -> int:
                     pending=rule_pending,
                     cooldowns=rule_cooldowns,
                     executors=rule_executors,
+                    food_kcal_per_dupe=config[
+                        "basic_survival_food_kcal_per_dupe"
+                    ],
                 )
                 rule_replay_input = {
                     "state": _rule_replay_state(state),
@@ -700,6 +739,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                             "door_id",
                             "tile_id",
                             "barracks_bed_count",
+                            "basic_survival_food_kcal_per_dupe",
                         )
                     },
                 }

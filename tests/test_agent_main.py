@@ -641,6 +641,23 @@ def _one_oxygen_rule():
     }
 
 
+def _one_basic_survival_rule():
+    return {
+        "phases": [],
+        "rules": [
+            {
+                "id": "test-basic-survival",
+                "priority": 90,
+                "when": {"op": "basic_survival_needed"},
+                "then": {"skill": "build_basic_survival", "args": {}},
+                "cooldown_cycles": 2,
+                "pending": 2,
+                "requires": ["build_basic_survival"],
+            }
+        ],
+    }
+
+
 def _run_skill_config():
     return {
         **agent_main.DEFAULT_CONFIG,
@@ -679,6 +696,44 @@ def test_rule_engine_executes_skill_with_live_catalog_and_dry_run(tmp_path, monk
     assert entry["rule_evaluation"]["selected"]["rule_id"] == "test-oxygen"
     assert [action["id"] for action in entry["actions"]] == ["MineralDeoxidizer"]
     assert entry["rule_cooldowns"] == {"test-oxygen": 10}
+
+
+def test_basic_survival_rule_dry_run_does_not_send_and_keeps_cooldown(
+    tmp_path, monkeypatch
+):
+    state = _rule_test_state()
+    state["dupes"] = [{"name": "Fixture Dupe", "x": 0, "y": -19}]
+    state["resources"]["materials"]["Algae"] = 1000
+    catalog = json.loads(
+        (Path(__file__).parent / "fixtures" / "construction_skills_catalog.json")
+        .read_text(encoding="utf-8")
+    )
+    log_path = tmp_path / "logs" / "agent.jsonl"
+    monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
+    monkeypatch.setattr(agent_main, "read_state", lambda _root: state)
+    monkeypatch.setattr(agent_main, "load_catalog", lambda _root: catalog)
+    monkeypatch.setattr(
+        agent_main, "load_agent_config", lambda _path: _run_skill_config()
+    )
+    monkeypatch.setattr(agent_main, "load_rules", _one_basic_survival_rule)
+    monkeypatch.setattr(agent_main, "time", _no_sleep_time())
+    monkeypatch.setattr(
+        agent_main,
+        "send_command",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("dry-run must not send basic-survival actions")
+        ),
+    )
+
+    assert agent_main.run(
+        ["--dry-run", "--max-steps", "1", "--manager", "none"]
+    ) == 0
+
+    entry = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert entry["selection_reason"] == "rule_engine"
+    assert entry["rule_evaluation"]["selected"]["rule_id"] == "test-basic-survival"
+    assert [action["id"] for action in entry["actions"]] == ["MineralDeoxidizer"]
+    assert entry["rule_cooldowns"] == {"test-basic-survival": 10}
 
 
 def test_rule_pending_blocks_resent_build_actions(tmp_path, monkeypatch):

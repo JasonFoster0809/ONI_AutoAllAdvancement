@@ -44,6 +44,57 @@ def test_rules_file_has_requested_cycle_phases_and_validates():
     assert phase_for_cycle(rules, 100) is None
 
 
+def test_basic_survival_rule_uses_safe_tri_state_trigger_and_pending_cooldown():
+    state = json.loads((FIXTURES / "empty_map.json").read_text(encoding="utf-8"))
+    state["world"]["map"][-1] = "#" * 41
+    state["cycle"] = 4
+    state["dupes"] = [{"name": "Fixture Dupe", "x": 0, "y": -19}]
+    state["resources"] = {
+        "food_kcal": 50000,
+        "materials": {"Algae": 1000, "ZincOre": 10000, "SandStone": 10000},
+    }
+    state["building_list"] = []
+    catalog = json.loads(
+        (FIXTURES / "construction_skills_catalog.json").read_text(encoding="utf-8")
+    )
+    executors = agent_main._rule_skill_executors(agent_main.DEFAULT_CONFIG)
+
+    result = explain_rules(state, catalog=catalog, executors=executors)
+    assert result["selected"]["rule_id"] == "basic-survival-shortage"
+    assert [action["id"] for action in result["selected"]["actions"]] == [
+        "MineralDeoxidizer"
+    ]
+
+    pending = explain_rules(
+        state,
+        catalog=catalog,
+        pending={"basic-survival-shortage": {}},
+        executors=executors,
+    )
+    assert next(
+        item for item in pending["reasons"]
+        if item["rule_id"] == "basic-survival-shortage"
+    )["reason"] == "pending"
+
+    cooldown = explain_rules(
+        state,
+        catalog=catalog,
+        cooldowns={"basic-survival-shortage": 3},
+        executors=executors,
+    )
+    assert next(
+        item for item in cooldown["reasons"]
+        if item["rule_id"] == "basic-survival-shortage"
+    )["reason"] == "cooldown"
+
+    del state["resources"]["materials"]["Algae"]
+    unknown = explain_rules(state, catalog=catalog, executors=executors)
+    assert next(
+        item for item in unknown["reasons"]
+        if item["rule_id"] == "basic-survival-shortage"
+    )["status"] == "unknown"
+
+
 def test_growth_and_midgame_rules_validate_and_select_their_catalog_skills():
     rules = load_rules()
     selected_rules = {
