@@ -1,0 +1,11 @@
+{
+  "cycle": 9,
+  "resources": {"food_kcal": 30000},
+  "dupes": [],
+  "environment": {"oxygen_avg_g": 300},
+  "rooms": [],
+  "achievements": [],
+  "events": [
+    {"cycle": 9, "type": "dupe_died", "data": {"dupe": "Fixture Dupe"}}
+  ]
+}

@@ -11,5 +11,39 @@
   "emergency_max_actions_per_turn": 12,
   "emergency_cooldown_cycles": 1,
   "emergency_pending_cycles": 2,
+  "scoring": {
+    "weights": {
+      "cycle_survived": 1.0,
+      "achievement_new": 100.0,
+      "morale": 0.1,
+      "food_stability": 5.0,
+      "oxygen_stability": 5.0,
+      "qualified_rooms": 1.0,
+      "dupe_death": -100.0,
+      "stress_persistent": -10.0,
+      "hunger_persistent": -10.0,
+      "low_oxygen_persistent": -15.0,
+      "repeated_rejection": -2.0,
+      "material_waste": -1.0
+    },
+    "thresholds": {
+      "oxygen_min_g": 50.0,
+      "food_kcal_per_dupe": 1000.0,
+      "dupe_calories_min_kcal": 100.0,
+      "stress_max": 90.0,
+      "persistence_reads": 3
+    },
+    "threshold_notes": {
+      "oxygen_min_g": "TODO_VERIFY; existing agent policy threshold, not a game danger limit",
+      "food_kcal_per_dupe": "TODO_VERIFY; existing agent planning heuristic, not verified consumption",
+      "dupe_calories_min_kcal": "TODO_VERIFY; existing agent emergency heuristic",
+      "stress_max": "TODO_VERIFY; existing mod alert policy threshold",
+      "persistence_reads": "TODO_VERIFY; scoring policy, not an ONI mechanic"
+    },
+    "optional_telemetry_notes": {
+      "morale": "TODO_VERIFY; numeric morale is not currently emitted in oni_state.json",
+      "material_waste_kg": "TODO_VERIFY; material waste is not currently emitted in oni_state.json"
+    }
+  },
   "goal_ranks": {}
 }

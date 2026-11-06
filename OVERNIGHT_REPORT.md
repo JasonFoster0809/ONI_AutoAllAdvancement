@@ -886,3 +886,57 @@ python -m agent.agent_main --dry-run --manager none --max-steps 1 --data-dir "$e
 
 Chỉ đọc state/catalog và ghi log/JSONL; không gửi command khi dùng
 `--dry-run`. C# không đổi; không chạy game, deploy, copy DLL hoặc push.
+
+## Giai đoạn 2 — Scoring
+
+**XONG — kiểm thử offline.** `agent/scoring.py` bổ sung các thành phần điểm
+cho cycle sống thêm, thành tựu mới, morale, dự trữ thức ăn/oxy, phòng được
+game phân loại, sự kiện dupe chết, stress/đói/oxy thấp kéo dài, lệnh bị từ chối lặp lại
+và vật liệu lãng phí khi có telemetry. Thiếu dữ liệu làm thành phần
+thành `unknown`; các điểm đã biết vẫn được cộng, không suy ra số liệu còn
+thiếu. Agent ghi mỗi vòng một dòng JSONL vào `logs/score.jsonl`, có `cycle`,
+`agent_commit`, `save_name`, `seed`, tổng điểm và chi tiết từng thành phần.
+Save/seed không có trong state thì lấy từ `ONI_SAVE_NAME`/`ONI_SEED`, nếu
+cũng thiếu sẽ là `null`. Event journal chỉ tính event mới kể từ khi agent
+bắt đầu, tránh tính lại lịch sử của colony.
+
+Trọng số và threshold nằm trong `agent/config.json`. Trọng số là cấu hình
+đánh giá để so sánh run, không phải số liệu hay mechanics của game. Các
+threshold mặc định (`oxygen_min_g=50`, `food_kcal_per_dupe=1000`,
+`dupe_calories_min_kcal=100`, `stress_max=90`, `persistence_reads=3`) đều
+được đánh dấu `TODO_VERIFY`; đây là ngưỡng policy/heuristic hiện có hoặc
+ngưỡng đánh giá, chưa được xác nhận là ngưỡng nguy hiểm ONI. State hiện tại
+không có morale hoặc material-waste telemetry, nên hai thành phần này ở
+trạng thái `unknown`. Phòng được đếm theo `rooms[].type != "Neutral"`; đây
+chỉ là proxy theo phân loại phòng game.
+
+Kiểm chứng:
+
+- `python -m pytest -q tests/test_scoring.py`: **11 passed** (fixture colony
+  khỏe, oxy thấp, dupe đói/chết/stress kéo dài, state thiếu trường, JSONL,
+  event journal).
+- `python -m pytest -q`: **141 passed**.
+- `python -m agent.rule_engine --validate`: **9 rules hợp lệ**.
+- Đã thử `dotnet build`; thất bại trước khi biên dịch do sandbox chặn đọc
+  `C:\Users\Admin\.gitconfig`:
+  `Error reading git repository information: Access to the path 'C:\Users\Admin\.gitconfig' is denied.`
+  Build cũng báo thiếu các assembly game tham chiếu. Không thử workaround;
+  phần thay đổi chỉ là Python, không sửa C#.
+
+Files thêm/sửa: `agent/scoring.py`, `agent/agent_main.py`,
+`agent/config.json`, `tests/test_scoring.py`,
+`tests/fixtures/scoring_{healthy,low_oxygen,hungry,dupe_dead,missing_fields}.json`
+và báo cáo này. Không có API ONI mới. Skills chưa có trong rule engine:
+không có (các `then.skill` trong rules đều có executor). Các skills bổ sung
+cho mục tiêu toàn cục chưa được mở rộng trong giai đoạn scoring.
+
+Kiểm tra output cục bộ (lệnh chạy agent chỉ ở chế độ dry-run):
+
+```powershell
+python -m agent.agent_main --dry-run --manager none --max-steps 3 --data-dir "$env:USERPROFILE\Documents\Klei\OxygenNotIncluded"
+Get-Content .\logs\score.jsonl -Tail 3
+python -c "import json; [print(json.loads(line)) for line in open('logs/score.jsonl', encoding='utf-8')]"
+```
+
+Kết quả trên fixture là offline; score chưa được hiệu chứng trên game thật.
+Không chạy game, deploy, copy DLL hoặc push.

@@ -19,7 +19,7 @@ from .diagnostics import state_metrics
 from .llm_chooser import choose_action
 from .gemini_manager import plan_goals
 from .metrics import calculate_metrics, write_metrics
-from .oni_client import read_state, send_command
+from .oni_client import get_data_dir, read_state, send_command
 from .planner import (
     mark_pending,
     next_step,
@@ -28,6 +28,14 @@ from .planner import (
 )
 from .rule_engine import explain_rules, load_rules
 from .rules import detect_emergency, oxygen_value
+from .scoring import (
+    DEFAULT_SCORING_CONFIG,
+    EventJournalReader,
+    ScoringTracker,
+    current_commit_hash,
+    make_score_record,
+    write_score_record,
+)
 from .skills import (
     SkillPlan,
     SkillPlanningError,
@@ -62,6 +70,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "emergency_max_actions_per_turn": 12,
     "emergency_cooldown_cycles": 1,
     "emergency_pending_cycles": 2,
+    "scoring": DEFAULT_SCORING_CONFIG,
     "goal_ranks": {},
 }
 
@@ -435,6 +444,13 @@ def run(argv: Sequence[str] | None = None) -> int:
     rule_cooldowns: dict[str, int] = {}
     emergency_pending: dict[str, dict[str, Any]] = {}
     emergency_cooldowns: dict[str, int] = {}
+    scoring_tracker = ScoringTracker(config.get("scoring"))
+    event_reader = EventJournalReader(
+        get_data_dir(args.data_dir) / "oni_events.jsonl",
+        start_at_end=True,
+    )
+    agent_commit = current_commit_hash(Path(__file__).resolve().parent.parent)
+    previous_score_state: dict[str, Any] | None = None
     cached_manager_goals: list[dict[str, Any]] | None = None
     manager_plan_expires_cycle: int | None = None
     step = 0
@@ -454,9 +470,11 @@ def run(argv: Sequence[str] | None = None) -> int:
         manager_plan: list[dict[str, Any]] | None = None
         catalog: list[dict[str, Any]] = []
         cycle: int | None = None
+        score_events: list[dict[str, Any]] | None = None
 
         try:
             state = read_state(args.data_dir)
+            score_events = event_reader.read_new()
             cycle = _state_cycle(state)
             oxygen = oxygen_value(state)
             oxygen_history.append(
@@ -743,6 +761,26 @@ def run(argv: Sequence[str] | None = None) -> int:
             selected["skipped"].append(
                 {"goal_id": "agent", "reason": f"error:{error}"}
             )
+
+        try:
+            score = scoring_tracker.score(
+                state,
+                previous_state=previous_score_state,
+                events=score_events,
+                result=result,
+                actions=selected.get("actions", []),
+            )
+            score_record = make_score_record(
+                score,
+                state,
+                commit_hash=agent_commit,
+                step=step,
+            )
+            write_score_record(score_record, LOG_PATH.parent / "score.jsonl")
+            if state:
+                previous_score_state = dict(state)
+        except (OSError, TypeError, ValueError) as error:
+            LOGGER.exception("Could not record score for step %d: %s", step, error)
 
         skipped = [*selected.get("skipped", []), *pending_expired]
         entry = {

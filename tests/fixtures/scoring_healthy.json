@@ -1,0 +1,17 @@
+{
+  "cycle": 8,
+  "save_name": "fixture-colony",
+  "seed": 12345,
+  "resources": {"food_kcal": 30000},
+  "dupes": [
+    {"name": "Fixture Dupe", "calories_kcal": 1200, "stress": 20}
+  ],
+  "environment": {"oxygen_avg_g": 300},
+  "rooms": [
+    {"type": "Barracks", "size": 20, "x": 1, "y": 2},
+    {"type": "Neutral", "size": 10, "x": 4, "y": 5}
+  ],
+  "achievements": [
+    {"id": "fixture-achievement", "name": "Fixture", "achieved": true, "progress": []}
+  ]
+}

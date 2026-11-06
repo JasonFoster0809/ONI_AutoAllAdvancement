@@ -1,0 +1,10 @@
+{
+  "cycle": 8,
+  "resources": {"food_kcal": 30000},
+  "dupes": [
+    {"name": "Fixture Dupe", "calories_kcal": 1200, "stress": 20}
+  ],
+  "environment": {"oxygen_avg_g": 20},
+  "rooms": [],
+  "achievements": []
+}
