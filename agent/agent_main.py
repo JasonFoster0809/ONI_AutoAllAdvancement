@@ -19,6 +19,11 @@ from .diagnostics import state_metrics
 from .llm_chooser import choose_action
 from .gemini_manager import plan_goals
 from .metrics import calculate_metrics, write_metrics
+from .memory import (
+    MemoryTracker,
+    load_memory,
+    load_proposed_rules,
+)
 from .oni_client import get_data_dir, read_state, send_command
 from .planner import (
     mark_pending,
@@ -449,6 +454,40 @@ def run(argv: Sequence[str] | None = None) -> int:
         get_data_dir(args.data_dir) / "oni_events.jsonl",
         start_at_end=True,
     )
+    memory_path = AGENT_DIR / "memory.json"
+    proposed_rules_path = AGENT_DIR / "rules_proposed.yaml"
+    memory_tracker: MemoryTracker | None
+    try:
+        memory_document = load_memory(memory_path)
+        proposed_rules = load_proposed_rules(proposed_rules_path)
+        memory_config = config.get("memory")
+        max_memory_entries = (
+            memory_config.get("max_entries", memory_document.get("max_entries", 100))
+            if isinstance(memory_config, Mapping)
+            else memory_document.get("max_entries", 100)
+        )
+        if isinstance(max_memory_entries, bool) or not isinstance(max_memory_entries, int) or max_memory_entries <= 0:
+            raise ValueError("memory.max_entries must be a positive integer")
+        memory_tracker = MemoryTracker(
+            memory_document,
+            proposed_rules,
+            config={
+                "thresholds": (
+                    config.get("scoring", {}).get("thresholds", {})
+                    if isinstance(config.get("scoring"), Mapping)
+                    else {}
+                ),
+                "rejection_repetitions": (
+                    memory_config.get("rejection_repetitions", 2)
+                    if isinstance(memory_config, Mapping)
+                    else 2
+                ),
+            },
+            max_entries=max_memory_entries,
+        )
+    except (OSError, ValueError) as error:
+        LOGGER.exception("Incident memory is unavailable: %s", error)
+        memory_tracker = None
     agent_commit = current_commit_hash(Path(__file__).resolve().parent.parent)
     previous_score_state: dict[str, Any] | None = None
     cached_manager_goals: list[dict[str, Any]] | None = None
@@ -471,6 +510,8 @@ def run(argv: Sequence[str] | None = None) -> int:
         catalog: list[dict[str, Any]] = []
         cycle: int | None = None
         score_events: list[dict[str, Any]] | None = None
+        score: dict[str, Any] | None = None
+        memory_incidents: list[dict[str, Any]] = []
 
         try:
             state = read_state(args.data_dir)
@@ -782,6 +823,22 @@ def run(argv: Sequence[str] | None = None) -> int:
         except (OSError, TypeError, ValueError) as error:
             LOGGER.exception("Could not record score for step %d: %s", step, error)
 
+        memory_lessons: list[dict[str, Any]] = []
+        if memory_tracker is not None:
+            try:
+                memory_incidents = memory_tracker.observe(
+                    state,
+                    score=score,
+                    events=score_events,
+                    result=result,
+                    actions=selected.get("actions", []),
+                )
+                if memory_incidents:
+                    memory_tracker.save(memory_path, proposed_rules_path)
+                memory_lessons = memory_tracker.lessons_for_log()
+            except (OSError, TypeError, ValueError) as error:
+                LOGGER.exception("Could not update incident memory at step %d: %s", step, error)
+
         skipped = [*selected.get("skipped", []), *pending_expired]
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -804,6 +861,8 @@ def run(argv: Sequence[str] | None = None) -> int:
             "emergency_pending": _copy_pending(emergency_pending),
             "emergency_pending_expired": emergency_pending_expired,
             "emergency_cooldowns": emergency_cooldowns,
+            "memory_lessons": memory_lessons,
+            "memory_incidents": memory_incidents,
             "result": result,
         }
         _append_log(entry)

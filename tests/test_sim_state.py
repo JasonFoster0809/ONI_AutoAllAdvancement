@@ -16,11 +16,22 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 def _run_simulation(states, tmp_path, monkeypatch):
     remaining = iter(copy.deepcopy(states))
+    memory_dir = tmp_path / "agent"
+    memory_dir.mkdir(exist_ok=True)
+    (memory_dir / "memory.json").write_text(
+        '{"version":1,"max_entries":100,"lessons":[]}',
+        encoding="utf-8",
+    )
+    (memory_dir / "rules_proposed.yaml").write_text(
+        '{"version":1,"proposals":[]}',
+        encoding="utf-8",
+    )
     log_path = tmp_path / "logs" / "agent.jsonl"
     catalog = json.loads(
         (FIXTURES / "emergency_catalog.json").read_text(encoding="utf-8")
     )
     monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
+    monkeypatch.setattr(agent_main, "AGENT_DIR", memory_dir)
     monkeypatch.setattr(agent_main, "read_state", lambda _data_dir: next(remaining))
     monkeypatch.setattr(agent_main, "load_catalog", lambda _data_dir: catalog)
     monkeypatch.setattr(

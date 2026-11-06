@@ -129,8 +129,19 @@ def test_agent_loop_appends_score_jsonl_without_affecting_dry_run(tmp_path, monk
     state = _fixture("scoring_healthy.json")
     (tmp_path / "oni_state.json").write_text(json.dumps(state), encoding="utf-8")
     (tmp_path / "oni_catalog.json").write_text("[]", encoding="utf-8")
+    memory_dir = tmp_path / "agent"
+    memory_dir.mkdir()
+    (memory_dir / "memory.json").write_text(
+        '{"version":1,"max_entries":100,"lessons":[]}',
+        encoding="utf-8",
+    )
+    (memory_dir / "rules_proposed.yaml").write_text(
+        '{"version":1,"proposals":[]}',
+        encoding="utf-8",
+    )
     log_path = tmp_path / "logs" / "agent.jsonl"
     monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
+    monkeypatch.setattr(agent_main, "AGENT_DIR", memory_dir)
 
     assert agent_main.run(
         ["--dry-run", "--max-steps", "1", "--data-dir", str(tmp_path)]

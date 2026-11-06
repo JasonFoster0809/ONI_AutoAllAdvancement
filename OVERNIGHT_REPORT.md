@@ -940,3 +940,50 @@ python -c "import json; [print(json.loads(line)) for line in open('logs/score.js
 
 Kết quả trên fixture là offline; score chưa được hiệu chứng trên game thật.
 Không chạy game, deploy, copy DLL hoặc push.
+
+## Giai đoạn 3 — Bộ nhớ bài học và rule proposals
+
+**XONG — kiểm thử offline; chưa kích hoạt bất kỳ rule proposal nào.**
+`agent/memory.py` phát hiện sự cố từ event journal mới và các thành phần score
+đã biết: `dupe_died`, stress/đói/oxy thấp kéo dài, và cùng một action bị từ
+chối lặp lại. Mỗi lesson giữ cycle (hoặc `null` nếu chưa biết), loại sự cố,
+bằng chứng state/event/result, nguyên nhân ghi rõ là **giả thuyết**, và rule
+đề xuất condition → action. Lỗi lặp được gộp theo incident/subject, số lần
+xuất hiện được giữ lại; memory chỉ giữ tối đa `memory.max_entries` mục gần
+nhất (mặc định 100).
+
+Đề xuất chỉ được ghi vào `agent/rules_proposed.yaml` — định dạng JSON tương
+thích YAML để validate không cần dependency mới. Validator yêu cầu
+`review_required: true`, điều kiện hợp lệ, và action thuộc dạng
+`manual_review` hoặc `skill_review`. Không có đường tự động copy vào
+`rules.yaml`. Agent chỉ đưa các lesson gần nhất vào JSONL log để tham khảo;
+không truyền chúng vào kế hoạch hành động và không thay đổi planner behavior.
+Fixtures và tests dùng thư mục tạm, không ghi incident giả vào memory/proposal
+thực trong repo.
+
+**Kiểm chứng:** `python -m pytest -q tests/test_memory.py` — **8 passed**;
+`python -m pytest -q` — **149 passed**; `python -m agent.memory --validate` —
+**valid, 0 proposals**; `python -m agent.rule_engine --validate` — **9 rules
+hợp lệ**. `agent/rules.yaml` không đổi. Không có API ONI/C# mới. Các ngưỡng
+được tái sử dụng (`oxygen_min_g`, calories, stress, persistence reads) và
+số lần từ chối lặp được đánh dấu `TODO_VERIFY` trong `agent/config.json`;
+đây là policy agent, không phải sự thật game đã xác minh.
+
+Files thêm/sửa: `agent/memory.py`, `agent/memory.json`,
+`agent/rules_proposed.yaml`, `agent/config.json`, `agent/agent_main.py`,
+`tests/test_memory.py`, fixtures scoring đã dùng lại, test isolation trong
+`tests/test_agent_main.py`, `tests/test_scoring.py`, `tests/test_sim_state.py`,
+và báo cáo này. Không có skill mới; các action đề xuất chỉ là gợi ý cần duyệt.
+
+Lệnh kiểm chứng thủ công (agent chạy trong dry-run; lệnh thứ nhất chỉ validate
+proposal, lệnh thứ hai đọc state/log lessons nhưng không gửi action):
+
+```powershell
+python -m agent.memory --validate
+python -m agent.agent_main --dry-run --manager none --max-steps 3 --data-dir "$env:USERPROFILE\Documents\Klei\OxygenNotIncluded"
+Get-Content .\agent\memory.json
+Get-Content .\agent\rules_proposed.yaml
+```
+
+Chưa chạy game/deploy, không copy DLL, không push. Giai đoạn 4 trở đi chưa
+được thực hiện.

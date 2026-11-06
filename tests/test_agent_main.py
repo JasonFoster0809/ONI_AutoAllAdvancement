@@ -1,9 +1,26 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from agent import agent_main
 from agent.planner import Goal
 from agent import planner
+
+
+@pytest.fixture(autouse=True)
+def isolate_persistent_agent_memory(tmp_path, monkeypatch):
+    memory_dir = tmp_path / "agent"
+    memory_dir.mkdir()
+    (memory_dir / "memory.json").write_text(
+        '{"version":1,"max_entries":100,"lessons":[]}',
+        encoding="utf-8",
+    )
+    (memory_dir / "rules_proposed.yaml").write_text(
+        '{"version":1,"proposals":[]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agent_main, "AGENT_DIR", memory_dir)
 
 
 def test_barracks_cli_overrides_bed_count_and_tile_id(tmp_path, monkeypatch):

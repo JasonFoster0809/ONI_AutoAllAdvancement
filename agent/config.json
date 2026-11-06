@@ -45,5 +45,12 @@
       "material_waste_kg": "TODO_VERIFY; material waste is not currently emitted in oni_state.json"
     }
   },
+  "memory": {
+    "max_entries": 100,
+    "rejection_repetitions": 2,
+    "notes": {
+      "rejection_repetitions": "TODO_VERIFY; agent policy for repeated identical command rejection, not an ONI mechanic"
+    }
+  },
   "goal_ranks": {}
 }
