@@ -62,6 +62,12 @@ before relying on automation; no game was launched for this work.
   precedence are covered offline. The strategist only reorders planner goals;
   it cannot issue actions. Gemini model availability and quotas remain
   **TODO_VERIFY**.
+- `agent/skill_factory.py` creates review-only Python drafts, a pytest, and a
+  description under `agent/skills_generated/`. Drafts are never imported by
+  the agent; activation remains a manual config edit, and its allowlist is
+  empty by default. AST restrictions, catalog build-ID checks, and a
+  time-limited fake-state pytest dry-run run before saving. The generated-skill
+  execution/activation path is deliberately not implemented or automatic.
 - `agent/diagnostics.py` summarizes trends, empty Deoxidizer stores, repeated
   blocked builds, and stagnant research from available logs and current
   state. Old log fields may be missing; it reports unknown instead of

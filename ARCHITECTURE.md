@@ -24,6 +24,13 @@ Python agent
     → preserve --dry-run or send the selected action batch
     → track pending actions, cycle cooldowns, reasons, and results in JSONL
 
+Generated skill drafts
+  plain-language request + optional strategist provider
+    → AST/import/action/catalog checks
+    → execute the generated pytest dry-run in a time-limited temporary directory
+    → save Python + test + description under agent/skills_generated/
+    → remain inactive unless manually allowlisted in agent/config.json
+
 Offline diagnostics
   logs/agent.jsonl + current state ───► diagnostics.md
   logs/agent.jsonl + recorded rule inputs/catalog ───► replay comparison
@@ -66,6 +73,13 @@ one rotated `.1` backup.
   available score, recent lessons, active goal, planner goal descriptions, and
   rule context. They exclude the map and raw building list. The latest score
   may be unavailable on the initial loop iteration.
+- `agent.skill_factory` writes review-only drafts to
+  `agent/skills_generated/`; the agent never imports or executes this directory.
+  Drafts accept `state` and return action dictionaries, and are checked for
+  restricted Python syntax, action types, and catalog-backed build IDs before
+  saving. A generated pytest dry-run runs in a temporary directory with a
+  timeout. `enabled_generated_skills` defaults to an empty list and is not an
+  execution hook; `--validate` statically checks only manually enabled drafts.
 - Rule cycle gates can schedule a water pump/wash basin and one PlanterBox in
   cycles 10–29, then one MassageTable and StorageLocker in cycles 30–99.
   These are catalog/inventory checked plans, not proof the colony's needs or

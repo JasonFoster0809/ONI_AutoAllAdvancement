@@ -1035,3 +1035,51 @@ python -m agent.agent_main --dry-run --manager none --max-steps 3 --data-dir "$e
 ```
 
 Giai đoạn 5 trở đi chưa được thực hiện.
+
+## Giai đoạn 5 — Xưởng kỹ năng an toàn
+
+**XONG — Python, offline; các bản nháp không được kích hoạt.** Thêm
+`agent/skill_factory.py` với lệnh:
+
+```powershell
+python -m agent.skill_factory "xây một khu lưu trữ cơ bản" --data-dir <data-dir>
+```
+
+Provider đọc từ `strategist` trong config và mặc định là `none`; khi tắt,
+factory tạo skeleton `plan(state)` trả danh sách rỗng kèm TODO. Khi provider
+được bật, factory dùng chung `GoalProvider.generate(prompt, timeout)` của
+strategist, yêu cầu JSON chứa code và mô tả. Tên model/key tiếp tục theo cấu
+hình provider hiện có; không thêm key hay giá trị model mặc định mới.
+
+Trước khi lưu, factory phân tích AST: cấm import (bao gồm toàn bộ module
+trong danh sách cấm), cấm `eval`/`exec`/`compile`/`open`/`__import__`, giới
+hạn lời gọi hàm và yêu cầu `plan(state)` trả danh sách action tĩnh với loại
+trong whitelist. ID build phải là chuỗi literal hoặc constant và phải tồn
+tại trong `oni_catalog.json`; action/dynamic ID ngoài hợp đồng bị từ chối
+với lý do ghi log. Mỗi bản nháp kèm pytest và mô tả. Trước khi lưu mã được
+chạy qua pytest trên state giả trong thư mục tạm, với timeout 15 giây.
+`--dry-run` thực hiện quy trình tương tự nhưng không lưu bản nháp.
+
+Mã nằm trong `agent/skills_generated/`, không có cơ chế import/runtime
+execution từ agent. `enabled_generated_skills` trong config mặc định là
+`[]`; chỉ được thêm ID thủ công sau review. `--validate` kiểm tra AST và ID
+catalog của mọi ID đã bật; không tự kích hoạt hoặc sửa config.
+
+**Kiểm chứng:** `python -m pytest -q tests/test_skill_factory.py` — **9
+passed**; `python -m pytest -q` — **172 passed**; rule engine
+`--validate` — **9 rules hợp lệ**. `dotnet build` không chạy vì C# không đổi.
+Không gọi LLM thật, chạy game, deploy, copy DLL hoặc push.
+
+Files thêm/sửa: `agent/skill_factory.py`, `agent/config.json`,
+`agent/skills_generated/README.md`, `tests/test_skill_factory.py`,
+`ARCHITECTURE.md`, `ROADMAP.md` và báo cáo này.
+
+Lệnh kiểm chứng và dry-run thủ manual:
+
+```powershell
+python -m agent.skill_factory --validate --data-dir <data-dir>
+python -m agent.skill_factory --dry-run "xây một khu lưu trữ cơ bản" --data-dir <data-dir>
+python -m pytest -q agent/skills_generated/test_<skill_id>.py
+```
+
+Giai đoạn 6 chưa được thực hiện.

@@ -66,5 +66,6 @@
       "gemini_model": "Set explicitly to a model available to the configured Gemini API; no default is assumed"
     }
   },
+  "enabled_generated_skills": [],
   "goal_ranks": {}
 }
