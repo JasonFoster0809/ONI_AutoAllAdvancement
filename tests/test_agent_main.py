@@ -532,6 +532,13 @@ def test_strategist_goal_order_is_applied_by_planner(tmp_path, monkeypatch):
                     {"id": "FarmingTech", "complete": False, "ready": True}
                 ],
             },
+            "achievements": [
+                {
+                    "id": "ReachedSpace",
+                    "name": "Fixture rocket achievement",
+                    "achieved": False,
+                }
+            ],
         }
     )
     (tmp_path / "oni_state.json").write_text(json.dumps(state), encoding="utf-8")
@@ -556,8 +563,11 @@ def test_strategist_goal_order_is_applied_by_planner(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
     monkeypatch.setattr(agent_main, "time", _no_sleep_time())
 
+    captured_prompts = []
+
     class Provider:
         def generate(self, *_args, **_kwargs):
+            captured_prompts.append(_args[0])
             return (
                 '{"goals":[{"id":"barracks","horizon_cycles":3,'
                 '"reason":"A barracks is not reported"}]}'
@@ -586,6 +596,11 @@ def test_strategist_goal_order_is_applied_by_planner(tmp_path, monkeypatch):
         "A barracks is not reported"
     )
     assert all(action["type"] == "build" for action in entry["actions"])
+    assert captured_prompts[0]["achievement_context"][0]["id"] == "ReachedSpace"
+    assert [goal["id"] for goal in captured_prompts[0]["available_goals"]] == [
+        "research_target",
+        "barracks",
+    ]
 
 
 def _rule_test_state():

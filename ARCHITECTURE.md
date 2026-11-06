@@ -23,6 +23,7 @@ Python agent
     → legacy Gemini manager or local Qwen tie-breaker remains optional
     → preserve --dry-run or send the selected action batch
     → track pending actions, cycle cooldowns, reasons, and results in JSONL
+    → send read-only achievement hints as strategist context only
 
 Generated skill drafts
   plain-language request + optional strategist provider
@@ -73,6 +74,11 @@ one rotated `.1` backup.
   available score, recent lessons, active goal, planner goal descriptions, and
   rule context. They exclude the map and raw building list. The latest score
   may be unavailable on the initial loop iteration.
+- `agent.achievements_plan` merges the game's `achievements` state block with
+  a static ID registry and exposes a text report plus goal-shaped context for
+  the strategist. Achievement hints do not enter the planner allowlist and do
+  not produce actions. Unverified game requirements, DLC/rocket/multi-world
+  prerequisites, difficulty, and exclusions stay `TODO_VERIFY`.
 - `agent.skill_factory` writes review-only drafts to
   `agent/skills_generated/`; the agent never imports or executes this directory.
   Drafts accept `state` and return action dictionaries, and are checked for

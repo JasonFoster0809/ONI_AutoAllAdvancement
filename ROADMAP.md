@@ -68,6 +68,12 @@ before relying on automation; no game was launched for this work.
   empty by default. AST restrictions, catalog build-ID checks, and a
   time-limited fake-state pytest dry-run run before saving. The generated-skill
   execution/activation path is deliberately not implemented or automatic.
+- `agent/achievements_plan.py` reports the 51 achievement IDs observed in
+  `oni_state.json`, merges live names/progress/completion state, and exposes
+  advisory context to the strategist only. It does not issue actions or make
+  achievement IDs selectable by the planner. Per-achievement requirements,
+  DLC/rocket/multi-world flags, difficulty, and exclusions remain
+  **TODO_VERIFY** where not verified from game code.
 - `agent/diagnostics.py` summarizes trends, empty Deoxidizer stores, repeated
   blocked builds, and stagnant research from available logs and current
   state. Old log fields may be missing; it reports unknown instead of

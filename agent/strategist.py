@@ -338,6 +338,7 @@ class Strategist:
         active_goal: str | None,
         available_goals: Sequence[Mapping[str, Any]],
         rules: Sequence[Mapping[str, Any]] = (),
+        achievement_context: Sequence[Mapping[str, Any]] = (),
     ) -> StrategyDecision | None:
         if self.config["provider"] == "none":
             return None
@@ -370,10 +371,21 @@ class Strategist:
                 for rule in rules
                 if isinstance(rule, Mapping)
             ],
+            "achievement_context": [
+                {
+                    key: achievement[key]
+                    for key in ("id", "description", "status", "suggested_order")
+                    if key in achievement
+                }
+                for achievement in achievement_context
+                if isinstance(achievement, Mapping)
+            ],
             "instruction": (
                 "Return only JSON {\"goals\":[{\"id\":\"...\",\"horizon_cycles\":N,"
                 "\"reason\":\"...\"}]}. Select only available_goals IDs. "
-                "Do not return actions or create game commands."
+                "Achievement context is advisory only and is not an allowed goal "
+                "unless its ID is also in available_goals. Do not return actions "
+                "or create game commands."
             ),
         }
         allowed = {goal["id"] for goal in goals}

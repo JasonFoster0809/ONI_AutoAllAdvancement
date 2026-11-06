@@ -218,6 +218,14 @@ and the non-empty strings returned by each requirement's `GetProgress`.
 The resulting `achievements` array contains `{id, name, achieved, progress}`,
 where `progress` is an array of requirement strings.
 
+The achievement snapshot confirms only the IDs, localized names, achieved
+flags, and runtime `GetProgress` text. It does not expose a static
+description, DLC/rocket/multi-world classification, difficulty, or
+mutual-exclusion metadata. Individual requirement implementations were not
+re-decompiled during the achievement-planning stage because the sandbox
+denied ILSpy access to `D:\Oxygen Not Included\OxygenNotIncluded_Data\Managed\mscorlib.dll`;
+those fields remain `TODO_VERIFY` in `agent/achievements_plan.yaml`.
+
 ## Environment state API
 
 `Grid.Temperature`, `Grid.Mass`, and `Grid.Element` are public grid indexers

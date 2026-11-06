@@ -15,6 +15,7 @@ from typing import Any
 
 from .catalog import CatalogError, load_catalog
 from . import planner as planner_module
+from .achievements_plan import strategist_context as achievement_strategist_context
 from .diagnostics import state_metrics
 from .llm_chooser import choose_action
 from .gemini_manager import plan_goals
@@ -724,6 +725,14 @@ def run(argv: Sequence[str] | None = None) -> int:
                         if isinstance(rule_items, list)
                         else []
                     )
+                    achievement_context: list[dict[str, Any]] = []
+                    try:
+                        achievement_context = achievement_strategist_context(state)
+                    except (OSError, TypeError, ValueError) as error:
+                        LOGGER.warning(
+                            "Could not read achievement planning context (%s)",
+                            type(error).__name__,
+                        )
                     decision = strategist.advise(
                         cycle=cycle,
                         state=state,
@@ -732,6 +741,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                         active_goal=active_goal,
                         available_goals=available_goals,
                         rules=strategy_rules,
+                        achievement_context=achievement_context,
                     )
                     if decision is not None:
                         strategy_active = True

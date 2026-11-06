@@ -72,6 +72,14 @@ def test_valid_plan_is_allowlisted_and_summary_is_compact():
         active_goal="research_target",
         available_goals=GOALS,
         rules=[{"id": "critical-dupe-hunger", "priority": 95}],
+        achievement_context=[
+            {
+                "id": "ReachedSpace",
+                "description": "Space achievement",
+                "status": "chưa rõ",
+                "suggested_order": 3,
+            }
+        ],
     )
 
     assert decision is not None
@@ -95,6 +103,14 @@ def test_valid_plan_is_allowlisted_and_summary_is_compact():
     ]
     assert prompt["rule_context"] == [
         {"id": "critical-dupe-hunger", "priority": 95}
+    ]
+    assert prompt["achievement_context"] == [
+        {
+            "id": "ReachedSpace",
+            "description": "Space achievement",
+            "status": "chưa rõ",
+            "suggested_order": 3,
+        }
     ]
     assert "map" not in json.dumps(prompt)
     assert "private-detail" not in json.dumps(prompt)
