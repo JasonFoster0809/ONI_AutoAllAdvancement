@@ -126,6 +126,124 @@ def test_plan_has_unique_ids_and_verified_requirements_for_all_observed_ids():
     )["required_dlc_ids"] == ["EXPANSION1_ID"]
 
 
+def test_plan_has_requirement_based_tiers_for_33_non_rocket_base_game_entries():
+    plan = load_plan()
+    tiered = [entry for entry in plan["entries"] if isinstance(entry.get("tier"), int)]
+
+    assert len(tiered) == 33
+    assert {entry["tier"] for entry in tiered} == {1, 2, 3, 4}
+    assert all(entry.get("tier_reason") for entry in tiered)
+    assert all(
+        entry["requires_dlc"] is False
+        and entry["requires_rocket"] is False
+        and entry["base_game_feasible"] is True
+        for entry in tiered
+    )
+    assert all(
+        entry["base_game_feasible"] == "rocket_required"
+        for entry in plan["entries"]
+        if entry["requires_rocket"] is True
+    )
+
+
+def test_conflicts_have_requirement_evidence_and_unverified_ones_stay_unknown():
+    plan = load_plan()
+    by_id = {entry["id"]: entry for entry in plan["entries"]}
+
+    no_farming = by_id["NoFarmTilesAndKCal"]
+    assert no_farming["conflicts_with"] == ["planting"]
+    assert "NoFarmables" in no_farming["conflicts_evidence"]
+
+    clean_power = by_id["Generate240000kJClean"]
+    assert clean_power["conflicts_with"] == [
+        "MethaneGenerator",
+        "PetroleumGenerator",
+        "WoodGasGenerator",
+        "Generator",
+        "PeatGenerator",
+    ]
+    assert "explicitly disallows" in clean_power["conflicts_evidence"]
+    assert by_id["Thriving"]["conflicts_with"] == "TODO_VERIFY"
+    assert by_id["Thriving"]["conflicts_evidence"] == "TODO_VERIFY"
+
+
+def test_capability_groups_are_mapped_to_requirement_backed_achievements():
+    plan = load_plan()
+    groups = {group["id"]: group for group in plan["capability_groups"]}
+
+    assert {
+        "cooking",
+        "automation",
+        "rooms",
+        "ranching",
+        "power",
+    }.issubset(groups)
+    assert "EatCookedFood" in groups["cooking"]["achievement_ids"]
+    assert "AutomateABuilding" in groups["automation"]["achievement_ids"]
+    assert "Build4NatureReserves" in groups["rooms"]["achievement_ids"]
+    assert "TameAllBasicCritters" in groups["ranching"]["achievement_ids"]
+    assert "Generate240000kJClean" in groups["power"]["achievement_ids"]
+    assert all(group["requirement_evidence"] for group in groups.values())
+    assert all(group["agent_support"] == "TODO_VERIFY" for group in groups.values())
+
+
+def test_next_pursuit_uses_lowest_unfinished_tier_and_skips_conflicts():
+    plan = load_plan()
+    plan["entries"] = [
+        {
+            "id": "PlantingPlan",
+            "capabilities": ["planting"],
+            "conflicts_with": "TODO_VERIFY",
+        },
+        {
+            "id": "NoFarmPlan",
+            "tier": 1,
+            "tier_reason": "No farming",
+            "requires_dlc": False,
+            "requires_rocket": False,
+            "base_game_feasible": True,
+            "conflicts_with": ["planting"],
+            "capabilities": ["food"],
+        },
+        {
+            "id": "SurvivalPlan",
+            "tier": 2,
+            "tier_reason": "Survive",
+            "requires_dlc": False,
+            "requires_rocket": False,
+            "base_game_feasible": True,
+            "conflicts_with": "TODO_VERIFY",
+            "capabilities": ["survival"],
+        },
+    ]
+    state = {
+        "achievements": [
+            {"id": "PlantingPlan", "achieved": False},
+            {"id": "NoFarmPlan", "achieved": False},
+            {"id": "SurvivalPlan", "achieved": False},
+        ]
+    }
+
+    report = render_report(state, plan, pursuing="PlantingPlan")
+
+    assert "SurvivalPlan (tier 2): Survive" in report
+    assert "NoFarmPlan (tier 1)" not in report.split("Gợi ý theo đuổi tiếp theo:", 1)[1]
+
+
+def test_next_pursuit_does_not_assume_a_conflict_without_active_pursuit():
+    plan = load_plan()
+    state = {
+        "achievements": [
+            {"id": "Survived100Cycles", "achieved": False},
+            {"id": "NoFarmTilesAndKCal", "achieved": False},
+        ]
+    }
+
+    report = render_report(state, plan)
+
+    assert "Survived100Cycles (tier 1)" in report
+
+
 def test_verified_base_game_and_difficulty_sort_before_unverified_and_dlc():
     plan = load_plan()
     plan["entries"] = [
@@ -144,7 +262,7 @@ def test_verified_base_game_and_difficulty_sort_before_unverified_and_dlc():
         },
         {
             "id": "rocket",
-            "base_game_feasible": True,
+            "base_game_feasible": "rocket_required",
             "requires_dlc": False,
             "requires_rocket": True,
             "difficulty": 2,

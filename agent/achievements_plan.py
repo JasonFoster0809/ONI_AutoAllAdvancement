@@ -218,6 +218,73 @@ def _suggested_order(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def _next_pursuit(
+    rows: Sequence[Mapping[str, Any]],
+    pursuing: str | None,
+) -> Mapping[str, Any] | None:
+    pursuing_row = next(
+        (row for row in rows if isinstance(pursuing, str) and row.get("id") == pursuing),
+        None,
+    )
+    pursuit_conflicts: set[str] = set()
+    pursuit_capabilities: set[str] = set()
+    if pursuing_row is not None:
+        tokens = pursuing_row.get("conflicts_with")
+        if isinstance(tokens, list):
+            pursuit_conflicts.update(
+                token for token in tokens if isinstance(token, str)
+            )
+        capabilities = pursuing_row.get("capabilities")
+        if isinstance(capabilities, list):
+            pursuit_capabilities.update(
+                capability
+                for capability in capabilities
+                if isinstance(capability, str)
+            )
+    elif isinstance(pursuing, str) and pursuing:
+        pursuit_conflicts.add(pursuing)
+        pursuit_capabilities.add(pursuing)
+
+    candidates = []
+    for row in rows:
+        tier = row.get("tier")
+        if (
+            row.get("achieved") is not False
+            or not isinstance(tier, int)
+            or row.get("requires_dlc") is not False
+            or row.get("requires_rocket") is not False
+            or row.get("base_game_feasible") is not True
+        ):
+            continue
+        row_conflicts = row.get("conflicts_with")
+        row_conflicts = (
+            {token for token in row_conflicts if isinstance(token, str)}
+            if isinstance(row_conflicts, list)
+            else set()
+        )
+        row_capabilities = row.get("capabilities")
+        row_capabilities = (
+            {token for token in row_capabilities if isinstance(token, str)}
+            if isinstance(row_capabilities, list)
+            else set()
+        )
+        if (
+            row.get("id") == pursuing
+            or row.get("id") in pursuit_conflicts
+            or row_conflicts.intersection(
+                pursuit_conflicts | pursuit_capabilities
+            )
+            or row_capabilities.intersection(pursuit_conflicts)
+        ):
+            continue
+        candidates.append(row)
+
+    if not candidates:
+        return None
+    lowest_tier = min(row["tier"] for row in candidates)
+    return next(row for row in candidates if row["tier"] == lowest_tier)
+
+
 def strategist_context(
     state: Mapping[str, Any],
     plan: Mapping[str, Any] | None = None,
@@ -238,6 +305,7 @@ def strategist_context(
 def render_report(
     state: Mapping[str, Any],
     plan: Mapping[str, Any] | None = None,
+    pursuing: str | None = None,
 ) -> str:
     rows = achievement_rows(state, plan)
     columns = (
@@ -250,6 +318,9 @@ def render_report(
         "requires_rocket",
         "requires_multiple_worlds",
         "base_game_feasible",
+        "tier",
+        "conflicts_with",
+        "capabilities",
         "difficulty",
         "mutually_exclusive",
         "progress",
@@ -272,6 +343,17 @@ def render_report(
             ),
             "base_game_feasible": str(
                 row.get("base_game_feasible", row.get("base_game", TODO))
+            ),
+            "tier": str(row.get("tier", TODO)),
+            "conflicts_with": (
+                ", ".join(row["conflicts_with"])
+                if isinstance(row.get("conflicts_with"), list)
+                else str(row.get("conflicts_with", TODO))
+            ),
+            "capabilities": (
+                ", ".join(row["capabilities"])
+                if isinstance(row.get("capabilities"), list)
+                else TODO
             ),
             "difficulty": str(row.get("difficulty", TODO)),
             "mutually_exclusive": str(row.get("mutually_exclusive", TODO)),
@@ -304,6 +386,15 @@ def render_report(
             f"Achievements listed: {len(rows)}",
         ]
     )
+    next_pursuit = _next_pursuit(rows, pursuing)
+    lines.extend(["", "Gợi ý theo đuổi tiếp theo:"])
+    if next_pursuit is None:
+        lines.append("Không có mục tiêu tiered nào khả dụng theo dữ liệu hiện tại.")
+    else:
+        lines.append(
+            f"{next_pursuit['id']} (tier {next_pursuit['tier']}): "
+            f"{next_pursuit.get('tier_reason', TODO)}"
+        )
     return "\n".join(lines)
 
 
@@ -312,6 +403,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--report", action="store_true", help="print the achievement table")
     parser.add_argument("--data-dir", type=Path, help="directory containing oni_state.json")
     parser.add_argument("--plan", type=Path, default=PLAN_PATH)
+    parser.add_argument(
+        "--pursuing",
+        help="current achievement ID or explicit conflict token to avoid",
+    )
     args = parser.parse_args(argv)
     if not args.report:
         parser.error("use --report to print the achievement table")
@@ -319,7 +414,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         plan = load_plan(args.plan)
         state = read_state(args.data_dir)
-        _print_report(render_report(state, plan))
+        _print_report(render_report(state, plan, args.pursuing))
         return 0
     except (AchievementPlanError, OSError, TypeError, ValueError) as error:
         LOGGER.error("Could not report achievements: %s", error)
