@@ -102,6 +102,7 @@ def replay_log(
             food_kcal_per_dupe=config[
                 "basic_survival_food_kcal_per_dupe"
             ],
+            oxygen_min_g=config["oxygen_min_g"],
         )
         selected = decision.get("selected")
         replayed_rule = selected.get("rule_id") if isinstance(selected, Mapping) else None

@@ -236,6 +236,7 @@ def _evaluate(
     history: Sequence[Mapping[str, Any]],
     catalog: Sequence[Mapping[str, Any]] = (),
     food_kcal_per_dupe: float = 1000.0,
+    oxygen_min_g: float | None = None,
 ) -> bool | None:
     operator = condition["op"]
     if operator in OPERATORS:
@@ -309,7 +310,9 @@ def _evaluate(
         found, value = _path_value(state, condition["path"])
         return value is None if found else UNKNOWN
     if operator == "basic_survival_needed":
-        return basic_survival_needed(state, catalog, food_kcal_per_dupe)
+        return basic_survival_needed(
+            state, catalog, food_kcal_per_dupe, oxygen_min_g
+        )
     if operator == "any_item":
         found, items = _path_value(state, condition["path"])
         if not found or not isinstance(items, list):
@@ -317,7 +320,10 @@ def _evaluate(
         if any(not isinstance(item, Mapping) for item in items):
             return UNKNOWN
         results = [
-            _evaluate(condition["where"], item, (), catalog, food_kcal_per_dupe)
+            _evaluate(
+                condition["where"], item, (), catalog, food_kcal_per_dupe,
+                oxygen_min_g,
+            )
             for item in items
         ]
         if any(result is True for result in results):
@@ -329,7 +335,8 @@ def _evaluate(
             return UNKNOWN
         results = [
             _evaluate(
-                condition["condition"], sample, (), catalog, food_kcal_per_dupe
+                condition["condition"], sample, (), catalog, food_kcal_per_dupe,
+                oxygen_min_g,
             )
             for sample in history[-reads:]
         ]
@@ -338,7 +345,9 @@ def _evaluate(
         return True if all(result is True for result in results) else UNKNOWN
     if operator == "all":
         results = [
-            _evaluate(item, state, history, catalog, food_kcal_per_dupe)
+            _evaluate(
+                item, state, history, catalog, food_kcal_per_dupe, oxygen_min_g
+            )
             for item in condition["conditions"]
         ]
         if any(result is False for result in results):
@@ -346,14 +355,17 @@ def _evaluate(
         return True if all(result is True for result in results) else UNKNOWN
     if operator == "any":
         results = [
-            _evaluate(item, state, history, catalog, food_kcal_per_dupe)
+            _evaluate(
+                item, state, history, catalog, food_kcal_per_dupe, oxygen_min_g
+            )
             for item in condition["conditions"]
         ]
         if any(result is True for result in results):
             return True
         return False if all(result is False for result in results) else UNKNOWN
     result = _evaluate(
-        condition["condition"], state, history, catalog, food_kcal_per_dupe
+        condition["condition"], state, history, catalog, food_kcal_per_dupe,
+        oxygen_min_g,
     )
     return not result if result is not None else UNKNOWN
 
@@ -378,6 +390,7 @@ def explain_rules(
     cooldowns: Mapping[str, int] | None = None,
     executors: Mapping[str, RuleExecutor] | None = None,
     food_kcal_per_dupe: float = 1000.0,
+    oxygen_min_g: float | None = None,
 ) -> dict[str, Any]:
     """Return per-rule decision reasons without executing skill plans."""
     rules_document = validate_rules(document) if document is not None else load_rules()
@@ -391,7 +404,8 @@ def explain_rules(
     )
     for _, rule in ordered:
         condition = _evaluate(
-            rule["when"], state, history, catalog, food_kcal_per_dupe
+            rule["when"], state, history, catalog, food_kcal_per_dupe,
+            oxygen_min_g,
         )
         if condition is None:
             status, reason = "unknown", "condition_unknown"

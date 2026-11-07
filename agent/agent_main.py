@@ -380,9 +380,13 @@ def _rule_skill_executors(config: Mapping[str, Any]) -> dict[str, Any]:
                         "basic_survival_food_kcal_per_dupe",
                         DEFAULT_CONFIG["basic_survival_food_kcal_per_dupe"],
                     ),
+                    oxygen_min_g=config.get("oxygen_min_g"),
                 )
                 for warning in plan.warnings:
-                    LOGGER.warning("Skill %s: %s", skill_name, warning)
+                    if warning == "no_powered_slot_TODO_VERIFY":
+                        LOGGER.warning("Skill %s skipped: %s", skill_name, warning)
+                    else:
+                        LOGGER.warning("Skill %s: %s", skill_name, warning)
                 return list(plan.actions)
             if skill_name == "build_barracks":
                 actions = skill(
@@ -726,6 +730,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                     food_kcal_per_dupe=config[
                         "basic_survival_food_kcal_per_dupe"
                     ],
+                    oxygen_min_g=config["oxygen_min_g"],
                 )
                 rule_replay_input = {
                     "state": _rule_replay_state(state),
@@ -740,6 +745,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                             "tile_id",
                             "barracks_bed_count",
                             "basic_survival_food_kcal_per_dupe",
+                            "oxygen_min_g",
                         )
                     },
                 }

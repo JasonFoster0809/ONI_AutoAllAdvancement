@@ -516,13 +516,11 @@ _BASIC_SURVIVAL_MAX_ACTIONS = 12
 def _basic_survival_oxygen_needed(
     state: Mapping[str, Any],
     catalog: Sequence[Mapping[str, Any]],
+    oxygen_min_g: float | None = None,
 ) -> bool | None:
-    dupes = state.get("dupes")
     buildings = state.get("building_list")
     if (
-        not isinstance(dupes, list)
-        or any(not isinstance(dupe, Mapping) for dupe in dupes)
-        or not isinstance(buildings, list)
+        not isinstance(buildings, list)
         or any(
             not isinstance(item, Mapping)
             or "id" not in item
@@ -534,36 +532,80 @@ def _basic_survival_oxygen_needed(
     try:
         deoxidizer = _catalog_building(catalog, "MineralDeoxidizer")
     except SkillPlanningError:
-        return False
-    existing = [
+        return None
+
+    oxygen_low: bool | None = None
+    oxygen = state.get("environment")
+    oxygen_value = (
+        _emergency_number(oxygen.get("oxygen_avg_g"))
+        if isinstance(oxygen, Mapping)
+        else None
+    )
+    threshold = _emergency_number(oxygen_min_g)
+    if oxygen_value is not None and threshold is not None:
+        oxygen_low = oxygen_value < threshold
+
+    alerts = state.get("alerts")
+    oxygen_alert: bool | None = None
+    if isinstance(alerts, list):
+        oxygen_alert = False
+        for alert in alerts:
+            if not isinstance(alert, Mapping) or not isinstance(alert.get("type"), str):
+                oxygen_alert = None
+                continue
+            alert_type = alert["type"].casefold()
+            if "oxygen" in alert_type or "oxy" in alert_type:
+                oxygen_alert = True
+                break
+
+    machines = [
         item
         for item in buildings
         if isinstance(item, Mapping)
         and item.get("id") == deoxidizer.get("id")
-        and item.get("state") in {"built", "under_construction"}
+        and item.get("state") == "built"
     ]
-    shortage = max(0, len(dupes) - len(existing))
-    if shortage == 0:
-        return False
-
-    built = [item for item in existing if item.get("state") == "built"]
-    if built:
+    has_algae: bool | None
+    has_powered: bool | None
+    if not machines:
+        has_algae = None
+        has_powered = None
+    else:
         masses = [
             _element_mass(item.get("stored"), "Algae")
             if "stored" in item
             else None
-            for item in built
+            for item in machines
         ]
-        if any(mass is None for mass in masses):
-            return None
-        return sum(mass for mass in masses if mass is not None) > 0
+        has_algae = (
+            True if any(mass is not None and mass > 0 for mass in masses)
+            else False if all(mass is not None for mass in masses)
+            else None
+        )
+        powered_values = [item.get("powered") for item in machines]
+        has_powered = (
+            True if any(value is True for value in powered_values)
+            else False if all(isinstance(value, bool) for value in powered_values)
+            else None
+        )
 
-    resources = state.get("resources")
-    materials = resources.get("materials") if isinstance(resources, Mapping) else None
-    if not isinstance(materials, Mapping) or "Algae" not in materials:
-        return None
-    algae = _emergency_number(materials.get("Algae"))
-    return algae > 0 if algae is not None and algae >= 0 else None
+    algae_missing = not has_algae if has_algae is not None else None
+    power_missing = not has_powered if has_powered is not None else None
+    shortage_signals = (oxygen_low, oxygen_alert, algae_missing, power_missing)
+    if oxygen_low is True or oxygen_alert is True:
+        return True
+    if algae_missing is True or power_missing is True:
+        resources = state.get("resources")
+        materials = resources.get("materials") if isinstance(resources, Mapping) else None
+        algae = (
+            _emergency_number(materials.get("Algae"))
+            if isinstance(materials, Mapping)
+            else None
+        )
+        if algae is None or algae < 0:
+            return None
+        return True
+    return False if all(signal is False for signal in shortage_signals) else None
 
 
 def _basic_survival_power_needed(
@@ -674,10 +716,11 @@ def basic_survival_needed(
     state: Mapping[str, Any],
     catalog: Sequence[Mapping[str, Any]],
     food_kcal_per_dupe: float = _BASIC_SURVIVAL_FOOD_KCAL_PER_DUPE,
+    oxygen_min_g: float | None = None,
 ) -> bool | None:
     """Return whether a verified basic-survival shortage has a safe response."""
     signals = [
-        _basic_survival_oxygen_needed(state, catalog),
+        _basic_survival_oxygen_needed(state, catalog, oxygen_min_g),
         _basic_survival_power_needed(state, catalog),
     ]
     food_action, food_reason = _basic_survival_food_research(
@@ -702,6 +745,7 @@ def build_basic_survival(
     state: Mapping[str, Any],
     catalog: Sequence[Mapping[str, Any]],
     food_kcal_per_dupe: float = _BASIC_SURVIVAL_FOOD_KCAL_PER_DUPE,
+    oxygen_min_g: float | None = None,
 ) -> SkillPlan:
     """Plan bounded oxygen, power, and food-research actions from known data."""
     actions: list[dict[str, Any]] = []
@@ -717,81 +761,124 @@ def build_basic_survival(
             if item.get("id") == deoxidizer.get("id")
             and item.get("state") in {"built", "under_construction"}
         ]
-        shortage = max(0, len(dupes) - len(existing))
-        built = [item for item in existing if item.get("state") == "built"]
-        if shortage and built:
-            algae_masses = [
-                _element_mass(item.get("stored"), "Algae")
-                if "stored" in item
-                else None
-                for item in built
-            ]
-            if any(mass is None for mass in algae_masses):
-                warnings.append("algae_stock_unknown_no_deoxidizer_build")
-                shortage = 0
-            elif sum(mass for mass in algae_masses if mass is not None) <= 0:
-                warnings.append("algae_stock_empty_no_deoxidizer_build")
-                shortage = 0
-        elif shortage:
-            resources = state.get("resources")
-            materials = resources.get("materials") if isinstance(resources, Mapping) else None
-            if not isinstance(materials, Mapping) or "Algae" not in materials:
-                warnings.append("algae_stock_unknown_no_deoxidizer_build")
-                shortage = 0
+        oxygen_needed = _basic_survival_oxygen_needed(
+            state, catalog, oxygen_min_g
+        )
+        if oxygen_needed is None:
+            warnings.append("oxygen_status_unknown")
+        elif oxygen_needed:
+            if any(
+                item.get("id") == deoxidizer.get("id")
+                and item.get("state") == "under_construction"
+                for item in existing
+            ):
+                warnings.append("mineral_deoxidizer_under_construction")
             else:
-                algae = _emergency_number(materials.get("Algae"))
+                resources = state.get("resources")
+                materials = (
+                    resources.get("materials")
+                    if isinstance(resources, Mapping)
+                    else None
+                )
+                algae = (
+                    _emergency_number(materials.get("Algae"))
+                    if isinstance(materials, Mapping)
+                    else None
+                )
                 if algae is None:
                     warnings.append("algae_stock_unknown_no_deoxidizer_build")
-                    shortage = 0
                 elif algae <= 0:
                     warnings.append("algae_stock_empty_no_deoxidizer_build")
-                    shortage = 0
-        if shortage:
-            rows, origin, _ = _map_context(state)
-            reserved = _reserved_building_cells(state, catalog)
-            stock_budget = _emergency_stock_budget(state)
-            placed = 0
-            for dupe in dupes:
-                if placed >= shortage or len(actions) >= _BASIC_SURVIVAL_MAX_ACTIONS:
-                    break
-                center = None
-                room_x, room_y = dupe.get("room_x"), dupe.get("room_y")
-                if room_x is None or room_y is None:
-                    room_x, room_y = dupe.get("x"), dupe.get("y")
-                if (
-                    isinstance(room_x, int)
-                    and not isinstance(room_x, bool)
-                    and isinstance(room_y, int)
-                    and not isinstance(room_y, bool)
-                ):
-                    center = (room_x, room_y)
-                if center is None:
-                    warnings.append("dupe_room_position_unknown")
-                    continue
-                try:
-                    _, _, room_cells = _room_cells(state, center)
-                    action = _emergency_build_action(
-                        state,
-                        catalog,
-                        "MineralDeoxidizer",
-                        center,
-                        rows,
-                        origin,
-                        room_cells,
-                        reserved,
-                        stock_budget,
-                    )
-                except SkillPlanningError as error:
-                    warnings.append(f"oxygen_build_skipped:{error.reason}")
-                    continue
-                actions.append(action)
-                placed += 1
-            if placed < shortage:
-                warnings.append("oxygen_action_limit_or_room_unavailable")
-            warnings.append(
-                "assumption_one_MineralDeoxidizer_per_dupe_TODO_VERIFY"
-            )
-            warnings.append("deoxidizer_Algae_consumption_rate_TODO_VERIFY")
+                else:
+                    try:
+                        rows, origin, _ = _map_context(state)
+                        wire = _catalog_building(catalog, "Wire")
+                        wire_width, wire_height = building_dimensions(wire)
+                        wire_cells = {
+                            (entry["x"] + dx, entry["y"] + dy)
+                            for entry in buildings
+                            if entry.get("id") == wire.get("id")
+                            and entry.get("state") == "built"
+                            and isinstance(entry.get("x"), int)
+                            and not isinstance(entry.get("x"), bool)
+                            and isinstance(entry.get("y"), int)
+                            and not isinstance(entry.get("y"), bool)
+                            for dx in range(wire_width)
+                            for dy in range(wire_height)
+                        }
+                        if not wire_cells:
+                            warnings.append("no_powered_slot_TODO_VERIFY")
+                        else:
+                            reserved = _reserved_building_cells(state, catalog)
+                            stock_budget = _emergency_stock_budget(state)
+                            placement = None
+                            for dupe in dupes:
+                                room_x = dupe.get("room_x")
+                                room_y = dupe.get("room_y")
+                                if room_x is None:
+                                    room_x = dupe.get("x")
+                                if room_y is None:
+                                    room_y = dupe.get("y")
+                                if not all(
+                                    isinstance(value, int) and not isinstance(value, bool)
+                                    for value in (room_x, room_y)
+                                ):
+                                    continue
+                                _, _, room_cells = _room_cells(state, (room_x, room_y))
+                                width, height = building_dimensions(deoxidizer)
+                                for candidate in find_empty_rectangle_candidates(
+                                    rows,
+                                    origin,
+                                    width,
+                                    height,
+                                    center=(room_x, room_y),
+                                    reserved=reserved,
+                                ):
+                                    floor_row = candidate["row"] + 1
+                                    if floor_row >= len(rows) or any(
+                                        rows[floor_row][column] not in {"#", "F", "X"}
+                                        for column in range(
+                                            candidate["column"],
+                                            candidate["column"] + width,
+                                        )
+                                    ):
+                                        continue
+                                    footprint = {
+                                        (candidate["left_x"] + dx, candidate["bottom_y"] + dy)
+                                        for dx in range(width)
+                                        for dy in range(height)
+                                    }
+                                    adjacent = {
+                                        (x + ox, y + oy)
+                                        for x, y in footprint
+                                        for ox, oy in ((-1, 0), (1, 0), (0, -1), (0, 1))
+                                    }
+                                    if footprint <= room_cells and adjacent & wire_cells:
+                                        placement = candidate
+                                        break
+                                if placement is not None:
+                                    break
+                            if placement is None:
+                                warnings.append("no_powered_slot_TODO_VERIFY")
+                            else:
+                                materials = _emergency_materials(
+                                    deoxidizer, state, stock_budget
+                                )
+                                actions.append(
+                                    _build_action(
+                                        deoxidizer,
+                                        state,
+                                        placement["x"],
+                                        placement["y"],
+                                        materials,
+                                    )
+                                )
+                                warnings.append("deoxidizer_Algae_consumption_rate_TODO_VERIFY")
+                    except SkillPlanningError as error:
+                        if error.reason in {"building_unavailable", "building_locked"}:
+                            warnings.append("no_powered_slot_TODO_VERIFY")
+                        else:
+                            warnings.append(f"oxygen_build_skipped:{error.reason}")
     except SkillPlanningError as error:
         warnings.append(f"oxygen_status_unknown:{error.reason}")
 

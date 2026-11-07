@@ -53,13 +53,22 @@ def test_basic_survival_rule_uses_safe_tri_state_trigger_and_pending_cooldown():
         "food_kcal": 50000,
         "materials": {"Algae": 1000, "ZincOre": 10000, "SandStone": 10000},
     }
-    state["building_list"] = []
+    state["environment"] = {"oxygen_avg_g": 20}
+    state["alerts"] = []
+    state["building_list"] = [
+        {"id": "Wire", "state": "built", "x": 1, "y": -19}
+    ]
     catalog = json.loads(
         (FIXTURES / "construction_skills_catalog.json").read_text(encoding="utf-8")
     )
     executors = agent_main._rule_skill_executors(agent_main.DEFAULT_CONFIG)
 
-    result = explain_rules(state, catalog=catalog, executors=executors)
+    result = explain_rules(
+        state,
+        catalog=catalog,
+        executors=executors,
+        oxygen_min_g=agent_main.DEFAULT_CONFIG["oxygen_min_g"],
+    )
     assert result["selected"]["rule_id"] == "basic-survival-shortage"
     assert [action["id"] for action in result["selected"]["actions"]] == [
         "MineralDeoxidizer"
@@ -70,6 +79,7 @@ def test_basic_survival_rule_uses_safe_tri_state_trigger_and_pending_cooldown():
         catalog=catalog,
         pending={"basic-survival-shortage": {}},
         executors=executors,
+        oxygen_min_g=agent_main.DEFAULT_CONFIG["oxygen_min_g"],
     )
     assert next(
         item for item in pending["reasons"]
@@ -81,6 +91,7 @@ def test_basic_survival_rule_uses_safe_tri_state_trigger_and_pending_cooldown():
         catalog=catalog,
         cooldowns={"basic-survival-shortage": 3},
         executors=executors,
+        oxygen_min_g=agent_main.DEFAULT_CONFIG["oxygen_min_g"],
     )
     assert next(
         item for item in cooldown["reasons"]
@@ -88,7 +99,17 @@ def test_basic_survival_rule_uses_safe_tri_state_trigger_and_pending_cooldown():
     )["reason"] == "cooldown"
 
     del state["resources"]["materials"]["Algae"]
-    unknown = explain_rules(state, catalog=catalog, executors=executors)
+    state["environment"] = {"oxygen_avg_g": 441}
+    state["building_list"] = [
+        {"id": "MineralDeoxidizer", "state": "built"},
+        {"id": "Wire", "state": "built", "x": 1, "y": -19},
+    ]
+    unknown = explain_rules(
+        state,
+        catalog=catalog,
+        executors=executors,
+        oxygen_min_g=agent_main.DEFAULT_CONFIG["oxygen_min_g"],
+    )
     assert next(
         item for item in unknown["reasons"]
         if item["rule_id"] == "basic-survival-shortage"

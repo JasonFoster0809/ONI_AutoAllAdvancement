@@ -54,6 +54,11 @@ def load_construction_catalog():
     return load_emergency_fixture("construction_skills_catalog.json")
 
 
+def configured_oxygen_min_g():
+    config_path = Path(__file__).parent.parent / "agent" / "config.json"
+    return json.loads(config_path.read_text(encoding="utf-8"))["oxygen_min_g"]
+
+
 def load_basic_skills_catalog():
     return load_emergency_fixture("basic_skills_catalog.json")
 
@@ -295,24 +300,109 @@ def test_build_power_basic_checks_unlocks_materials_and_map_support():
         build_power_basic(blocked, load_construction_catalog())
 
 
-def test_basic_survival_builds_deoxidizer_per_dupe_inside_dupe_room():
+def test_basic_survival_builds_one_deoxidizer_for_confirmed_low_oxygen():
     state = supported_construction_state()
     state["dupes"] = [
         {"name": "A", "x": 0, "y": -19},
         {"name": "B", "x": 1, "y": -19},
     ]
     state["resources"]["materials"]["Algae"] = 1000
-    plan = build_basic_survival(state, load_construction_catalog())
+    state["environment"] = {"oxygen_avg_g": 20}
+    state["alerts"] = []
+    state["building_list"] = [
+        {"id": "Wire", "state": "built", "x": 1, "y": -19}
+    ]
+    oxygen_min_g = configured_oxygen_min_g()
+    plan = build_basic_survival(
+        state, load_construction_catalog(), oxygen_min_g=oxygen_min_g
+    )
 
     oxygen_actions = [
         action for action in plan.actions if action["id"] == "MineralDeoxidizer"
     ]
-    assert len(oxygen_actions) == 2
+    assert len(oxygen_actions) == 1
     assert all(action["type"] == "build" for action in oxygen_actions)
     assert all(action["orientation"] == "Neutral" for action in oxygen_actions)
-    assert len({(action["x"], action["y"]) for action in oxygen_actions}) == 2
-    assert "assumption_one_MineralDeoxidizer_per_dupe_TODO_VERIFY" in plan.warnings
+    assert "assumption_one_MineralDeoxidizer_per_dupe_TODO_VERIFY" not in plan.warnings
     assert len(plan.actions) <= 12
+
+
+def test_basic_survival_does_not_build_for_cycle_six_healthy_oxygen_state():
+    state = supported_construction_state()
+    state["cycle"] = 6
+    state["dupes"] = [
+        {"name": f"Dupe {index}", "x": index, "y": -19}
+        for index in range(5)
+    ]
+    state["environment"] = {"oxygen_avg_g": 441}
+    state["alerts"] = []
+    state["resources"]["food_kcal"] = 50000
+    state["resources"]["materials"]["Algae"] = 1000
+    state["building_list"] = [
+        {
+            "id": "MineralDeoxidizer",
+            "state": "built",
+            "x": 10 + index,
+            "y": 10,
+            "powered": True,
+            "stored": [{"element": "Algae", "kg": 95}],
+        }
+        for index in range(2)
+    ]
+
+    plan = build_basic_survival(
+        state,
+        load_construction_catalog(),
+        oxygen_min_g=configured_oxygen_min_g(),
+    )
+
+    assert basic_survival_needed(
+        state,
+        load_construction_catalog(),
+        oxygen_min_g=configured_oxygen_min_g(),
+    ) is False
+    assert not any(action["id"] == "MineralDeoxidizer" for action in plan.actions)
+    assert plan.actions == []
+
+
+def test_low_oxygen_and_empty_machine_algae_build_only_next_to_existing_wire():
+    state = supported_construction_state()
+    state["dupes"] = [{"name": "A", "x": 0, "y": -19}]
+    state["environment"] = {"oxygen_avg_g": 20}
+    state["alerts"] = []
+    state["resources"]["materials"]["Algae"] = 1000
+    state["building_list"] = [
+        {
+            "id": "MineralDeoxidizer",
+            "state": "built",
+            "x": 10,
+            "y": 10,
+            "powered": False,
+            "stored": [],
+        },
+        {"id": "Wire", "state": "built", "x": 1, "y": -19},
+    ]
+
+    plan = build_basic_survival(
+        state,
+        load_construction_catalog(),
+        oxygen_min_g=configured_oxygen_min_g(),
+    )
+
+    oxygen_actions = [
+        action for action in plan.actions if action["id"] == "MineralDeoxidizer"
+    ]
+    assert len(oxygen_actions) == 1
+    assert oxygen_actions[0]["x"] == 0
+
+    state["resources"]["materials"]["Algae"] = 0
+    empty_stock = build_basic_survival(
+        state, load_construction_catalog(), oxygen_min_g=50
+    )
+    assert not any(
+        action["id"] == "MineralDeoxidizer" for action in empty_stock.actions
+    )
+    assert "algae_stock_empty_no_deoxidizer_build" in empty_stock.warnings
 
 
 def test_basic_survival_does_not_build_when_deoxidizer_algae_is_unknown_or_empty():
@@ -325,13 +415,13 @@ def test_basic_survival_does_not_build_when_deoxidizer_algae_is_unknown_or_empty
 
     unknown = build_basic_survival(state, load_construction_catalog())
     assert not any(action["id"] == "MineralDeoxidizer" for action in unknown.actions)
-    assert "algae_stock_unknown_no_deoxidizer_build" in unknown.warnings
+    assert "oxygen_status_unknown" in unknown.warnings
     assert basic_survival_needed(state, load_construction_catalog()) is None
 
     state["building_list"][0]["stored"] = []
     empty = build_basic_survival(state, load_construction_catalog())
     assert not any(action["id"] == "MineralDeoxidizer" for action in empty.actions)
-    assert "algae_stock_empty_no_deoxidizer_build" in empty.warnings
+    assert "no_powered_slot_TODO_VERIFY" in empty.warnings
 
 
 def test_basic_survival_power_plan_requires_unpowered_consumer_and_known_no_source():

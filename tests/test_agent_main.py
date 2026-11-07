@@ -704,6 +704,10 @@ def test_basic_survival_rule_dry_run_does_not_send_and_keeps_cooldown(
     state = _rule_test_state()
     state["dupes"] = [{"name": "Fixture Dupe", "x": 0, "y": -19}]
     state["resources"]["materials"]["Algae"] = 1000
+    state["environment"] = {"oxygen_avg_g": 20}
+    state["building_list"] = [
+        {"id": "Wire", "state": "built", "x": 1, "y": -19}
+    ]
     catalog = json.loads(
         (Path(__file__).parent / "fixtures" / "construction_skills_catalog.json")
         .read_text(encoding="utf-8")

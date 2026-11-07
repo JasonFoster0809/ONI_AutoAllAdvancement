@@ -80,10 +80,11 @@ def test_simulated_sustained_oxygen_decline_triggers_build_plan(
 
 
 def test_simulated_oxygen_recovery_prevents_emergency(tmp_path, monkeypatch):
-    entries = _run_simulation(oxygen_sequence((45, 60, 45)), tmp_path, monkeypatch)
+    entries = _run_simulation(oxygen_sequence((45, 60, 60)), tmp_path, monkeypatch)
 
     assert all(entry["goal_id"] != "emergency" for entry in entries)
-    assert entries[-1]["rule_evaluation"]["selected"] is None
+    selected = entries[-1]["rule_evaluation"]["selected"]
+    assert selected is None or selected["rule_id"] != "basic-survival-shortage"
 
 
 def test_simulated_empty_algae_warns_without_adding_second_machine(
