@@ -13,6 +13,7 @@ from .skills import (
     SkillPlanningError,
     build_barracks,
     build_research_center_setup,
+    mine_metal_ore,
 )
 
 
@@ -202,6 +203,14 @@ def _plan_research_center_setup(
     return build_research_center_setup(state, catalog, "ResearchCenter")
 
 
+def _plan_mine_metal_ore(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+    _config: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    return mine_metal_ore(state, catalog, "ResearchCenter")
+
+
 def barracks_done(state: Mapping[str, Any]) -> bool | None:
     if "rooms" not in state:
         return None
@@ -258,6 +267,15 @@ def registered_goal_ids() -> list[str]:
     return [goal.id for goal in GOALS]
 
 
+register_goal(
+    Goal(
+        id="mine_metal_ore",
+        description="Dig a safe route to catalog-approved raw metal ore",
+        is_done=lambda _state: False,
+        plan=_plan_mine_metal_ore,
+    ),
+    rank=-2,
+)
 register_goal(
     Goal(
         id="research_center_setup",
@@ -494,7 +512,8 @@ def mark_pending(
     accepted: list[dict[str, Any]] = []
     for index, action in enumerate(actions):
         if action.get("type") != "build" and not (
-            goal_id == "research_center_setup" and action.get("type") == "dig"
+            goal_id in ("mine_metal_ore", "research_center_setup")
+            and action.get("type") == "dig"
         ):
             continue
         if results is not None:

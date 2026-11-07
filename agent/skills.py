@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -22,6 +23,7 @@ from .maputils import (
     find_empty_rectangle_candidates,
     is_liquid,
     row_col_to_xy,
+    state_metal_ores,
     state_map,
     xy_to_row_col,
 )
@@ -1883,6 +1885,148 @@ def build_research_center_setup(
             for x, y in sorted(missing, key=lambda position: (position[1], position[0]))
         ]
     return [_build_action(building, state, pivot_x, bottom_y, elements)]
+
+
+def mine_metal_ore(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+    research_center_id: str,
+    *,
+    max_dig_actions: int = 6,
+    avoid_radius: int = 4,
+) -> list[dict[str, Any]]:
+    """Plan a short safe dig path to a catalog-approved raw metal ore."""
+    building = _get_building(catalog, research_center_id)
+    if max_dig_actions <= 0 or avoid_radius < 0:
+        raise SkillPlanningError("invalid_mining_limits")
+
+    categories = material_categories(building)
+    metal_categories = [
+        category
+        for category in categories
+        if isinstance(category.get("category"), str)
+        and category["category"].casefold() == "metal"
+    ]
+    if len(metal_categories) != 1:
+        raise SkillPlanningError("research_center_metal_category_unknown")
+    metal_category = metal_categories[0]
+    options = metal_category.get("options")
+    required_mass = metal_category.get("mass_kg")
+    if (
+        not isinstance(options, list)
+        or any(not isinstance(option, str) or not option for option in options)
+        or isinstance(required_mass, bool)
+        or not isinstance(required_mass, (int, float))
+        or not math.isfinite(required_mass)
+        or required_mass < 0
+    ):
+        raise SkillPlanningError("research_center_metal_requirement_unknown")
+
+    resources = state.get("resources")
+    stock = resources.get("materials") if isinstance(resources, Mapping) else None
+    if not isinstance(stock, Mapping):
+        raise SkillPlanningError("material_inventory_unavailable")
+    stock_by_name = {
+        name.casefold(): amount
+        for name, amount in stock.items()
+        if isinstance(name, str)
+        and not isinstance(amount, bool)
+        and isinstance(amount, (int, float))
+        and math.isfinite(amount)
+        and amount >= 0
+    }
+    allowed_elements = {option.casefold() for option in options}
+    if any(
+        stock_by_name.get(option.casefold(), 0) >= required_mass
+        for option in options
+    ):
+        raise SkillPlanningError("research_center_metal_available")
+
+    try:
+        ores = state_metal_ores(state)
+    except (KeyError, TypeError, ValueError) as error:
+        raise SkillPlanningError("metal_ore_data_unknown") from error
+    targets = {
+        (ore["x"], ore["y"])
+        for ore in ores
+        if isinstance(ore.get("element"), str)
+        and ore["element"].casefold() in allowed_elements
+    }
+    if not targets:
+        raise SkillPlanningError("no_research_center_metal_ore")
+
+    rows, origin, center = _map_context(state)
+    if center is None:
+        raise SkillPlanningError("mining_telepad_unknown")
+    start_cell = cell_at_xy(rows, origin, center[0], center[1])
+    gas_starts = (
+        [center]
+        if start_cell == "G"
+        else [
+            (center[0] + dx, center[1] + dy)
+            for dx, dy in ((0, -1), (-1, 0), (1, 0), (0, 1))
+            if cell_at_xy(rows, origin, center[0] + dx, center[1] + dy)
+            == "G"
+        ]
+    )
+    if not gas_starts:
+        raise SkillPlanningError("mining_gas_region_unavailable")
+
+    danger: set[tuple[int, int]] = set()
+    for row_index, row in enumerate(rows):
+        for column, cell in enumerate(row):
+            if cell not in ("L", "V"):
+                continue
+            x, y = row_col_to_xy(row_index, column, origin, map_height=len(rows))
+            danger.update(
+                (x + dx, y + dy)
+                for dx in range(-avoid_radius, avoid_radius + 1)
+                for dy in range(-avoid_radius, avoid_radius + 1)
+            )
+
+    queue: deque[tuple[int, int]] = deque()
+    previous: dict[tuple[int, int], tuple[int, int] | None] = {}
+    for position in sorted(set(gas_starts)):
+        previous[position] = None
+        queue.append(position)
+
+    target: tuple[int, int] | None = None
+    while queue:
+        x, y = queue.popleft()
+        current = (x, y)
+        if current in targets:
+            target = current
+            break
+        for dx, dy in ((0, -1), (-1, 0), (1, 0), (0, 1)):
+            neighbor = (x + dx, y + dy)
+            if neighbor in previous:
+                continue
+            cell = cell_at_xy(rows, origin, *neighbor)
+            if cell not in ("G", "#") or (cell == "#" and neighbor in danger):
+                continue
+            previous[neighbor] = current
+            queue.append(neighbor)
+
+    if target is None:
+        raise SkillPlanningError("no_safe_reachable_metal_ore")
+
+    path: list[tuple[int, int]] = []
+    current: tuple[int, int] | None = target
+    while current is not None:
+        path.append(current)
+        current = previous[current]
+    path.reverse()
+    dig_cells = [
+        position
+        for position in path
+        if cell_at_xy(rows, origin, *position) == "#"
+    ][:max_dig_actions]
+    if not dig_cells:
+        raise SkillPlanningError("no_metal_ore_dig_actions")
+    return [
+        {"type": "dig", "x": x, "y": y}
+        for x, y in dig_cells
+    ]
 
 
 def dig_corridor(

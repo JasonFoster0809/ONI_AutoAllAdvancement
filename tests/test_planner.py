@@ -69,6 +69,37 @@ def load_research_center_catalog():
     )
 
 
+def metal_mining_state():
+    rows = ["." * 41 for _ in range(41)]
+    element_rows = ["." * 41 for _ in range(41)]
+    map_row = list(rows[20])
+    map_row[20:24] = "GG##"
+    rows[20] = "".join(map_row)
+    element_row = list(element_rows[20])
+    element_row[22:24] = "aa"
+    element_rows[20] = "".join(element_row)
+    return {
+        "cycle": 0,
+        "building_list": [],
+        "resources": {"materials": {}},
+        "world": {
+            "start": {"type": "telepad", "x": 0, "y": 0},
+            "origin": {"x": -20, "y": -20},
+            "map": rows,
+            "element_map": element_rows,
+            "element_legend": {"a": "Cuprite"},
+            "metal_ores": [
+                {
+                    "x": 3,
+                    "y": 0,
+                    "element": "Cuprite",
+                    "distance_from_telepad": 3,
+                }
+            ],
+        },
+    }
+
+
 def test_research_goal_has_priority_over_barracks():
     step = next_step(
         load_fixture("goal_research_ready.json"),
@@ -423,6 +454,153 @@ def test_research_center_setup_pending_digs_wait_for_map_acknowledgment():
     )
     assert resumed["actions"][0]["type"] == "build"
     assert resumed["actions"][0]["id"] == "ResearchCenter"
+
+
+def test_mine_metal_ore_digs_shortest_route_to_catalog_metal():
+    step = next_step(
+        metal_mining_state(),
+        load_research_center_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["mine_metal_ore"],
+    )
+
+    assert step["goal_id"] == "mine_metal_ore"
+    assert step["actions"] == [
+        {"type": "dig", "x": 2, "y": 0},
+        {"type": "dig", "x": 3, "y": 0},
+    ]
+
+
+def test_mine_metal_ore_caps_each_batch_at_six_digs():
+    state = metal_mining_state()
+    rows = list(state["world"]["map"])
+    row = list(rows[20])
+    row[20:31] = "G" + "#" * 10
+    rows[20] = "".join(row)
+    state["world"]["map"] = rows
+    element_rows = list(state["world"]["element_map"])
+    element_row = list(element_rows[20])
+    element_row[21:31] = "a" * 10
+    element_rows[20] = "".join(element_row)
+    state["world"]["element_map"] = element_rows
+    state["world"]["metal_ores"] = [
+        {
+            "x": 10,
+            "y": 0,
+            "element": "Cuprite",
+            "distance_from_telepad": 10,
+        }
+    ]
+
+    step = next_step(
+        state,
+        load_research_center_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["mine_metal_ore"],
+    )
+
+    assert len(step["actions"]) == 6
+    assert [action["x"] for action in step["actions"]] == list(range(1, 7))
+
+
+def test_mine_metal_ore_skips_when_no_ore_is_reported():
+    state = metal_mining_state()
+    state["world"]["metal_ores"] = []
+    step = next_step(
+        state,
+        load_research_center_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["mine_metal_ore"],
+    )
+
+    assert step["goal_id"] == "no_goal"
+    assert {
+        "goal_id": "mine_metal_ore",
+        "reason": "no_research_center_metal_ore",
+    } in step["skipped"]
+
+
+@pytest.mark.parametrize("hazard", ["L", "V"])
+def test_mine_metal_ore_does_not_dig_near_liquid_or_vacuum(hazard):
+    state = metal_mining_state()
+    rows = state["world"]["map"]
+    row = list(rows[19])
+    row[23] = hazard
+    rows[19] = "".join(row)
+    step = next_step(
+        state,
+        load_research_center_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["mine_metal_ore"],
+    )
+
+    assert step["goal_id"] == "no_goal"
+    assert {
+        "goal_id": "mine_metal_ore",
+        "reason": "no_safe_reachable_metal_ore",
+    } in step["skipped"]
+
+
+def test_mine_metal_ore_yields_to_research_center_when_stock_is_sufficient():
+    state = metal_mining_state()
+    state["resources"]["materials"]["Cuprite"] = 400
+    rows = ["G" * 41 for _ in range(41)]
+    rows[21] = "#" * 41
+    state["world"]["map"] = rows
+    state["world"]["element_map"] = ["." * 41 for _ in range(41)]
+    state["world"]["metal_ores"] = []
+
+    step = next_step(
+        state,
+        load_research_center_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["mine_metal_ore", "research_center_setup"],
+    )
+
+    assert step["goal_id"] == "research_center_setup"
+    assert step["actions"][0]["id"] == "ResearchCenter"
+    assert {
+        "goal_id": "mine_metal_ore",
+        "reason": "research_center_metal_available",
+    } in step["skipped"]
+
+
+def test_mine_metal_ore_accepted_digs_are_pending_until_map_changes():
+    state = metal_mining_state()
+    catalog = load_research_center_catalog()
+    step = next_step(
+        state,
+        catalog,
+        CONFIG,
+        {},
+        enabled_goals=["mine_metal_ore"],
+    )
+    pending = {}
+    mark_pending(
+        pending,
+        step["goal_id"],
+        step["actions"],
+        submitted_step=1,
+        results=[{"ok": True} for _ in step["actions"]],
+    )
+
+    repeated = next_step(
+        state,
+        catalog,
+        CONFIG,
+        pending,
+        enabled_goals=["mine_metal_ore"],
+    )
+
+    assert repeated["goal_id"] == "no_goal"
+    assert {"goal_id": "mine_metal_ore", "reason": "pending"} in repeated[
+        "skipped"
+    ]
 
 
 def test_done_and_pending_goals_are_skipped():

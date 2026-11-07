@@ -11,6 +11,7 @@ from agent.maputils import (
     is_solid,
     is_vacuum,
     row_col_to_xy,
+    state_metal_ores,
     state_map,
     xy_to_row_col,
 )
@@ -72,3 +73,18 @@ def test_find_rectangle_respects_floor_and_reserved_cells():
 def test_invalid_map_is_rejected():
     with pytest.raises(ValueError, match="same non-zero width"):
         find_empty_rectangle(["..", "."], {"x": 0, "y": 0}, 1, 1)
+
+
+def test_state_metal_ores_validates_map_and_element_legend():
+    state = load_empty_map()
+    state["world"]["map"][20] = state["world"]["map"][20][:20] + "#" + state["world"]["map"][20][21:]
+    element_rows = ["." * 41 for _ in range(41)]
+    element_rows[20] = element_rows[20][:20] + "a" + element_rows[20][21:]
+    state["world"]["element_map"] = element_rows
+    state["world"]["element_legend"] = {"a": "Cuprite"}
+    state["world"]["metal_ores"] = [
+        {"x": 0, "y": 0, "element": "Cuprite", "distance_from_telepad": 0},
+        {"x": 1, "y": 0, "element": "Cuprite", "distance_from_telepad": 1},
+    ]
+
+    assert state_metal_ores(state) == [state["world"]["metal_ores"][0]]

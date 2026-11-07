@@ -181,3 +181,56 @@ def state_map(state: Mapping[str, Any]) -> tuple[list[str], dict[str, int]]:
     if not isinstance(origin.get("x"), int) or not isinstance(origin.get("y"), int):
         raise ValueError("map origin must have integer x and y")
     return map_rows, {"x": origin["x"], "y": origin["y"]}
+
+
+def state_metal_ores(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return validated ore locations reported by the mod's world snapshot."""
+    world = state.get("world")
+    if not isinstance(world, Mapping):
+        raise ValueError("state world is unavailable")
+    ores = world.get("metal_ores")
+    if not isinstance(ores, list):
+        raise ValueError("world metal_ores is unavailable")
+
+    rows, origin = state_map(state)
+    element_rows = world.get("element_map")
+    legend = world.get("element_legend")
+    if element_rows is not None or legend is not None:
+        if (
+            not isinstance(element_rows, list)
+            or len(element_rows) != len(rows)
+            or any(
+                not isinstance(row, str) or len(row) != len(rows[0])
+                for row in element_rows
+            )
+            or not isinstance(legend, Mapping)
+        ):
+            raise ValueError("world element_map or element_legend is invalid")
+
+    valid: list[dict[str, Any]] = []
+    seen: set[tuple[int, int]] = set()
+    for ore in ores:
+        if not isinstance(ore, Mapping):
+            continue
+        x, y, element = ore.get("x"), ore.get("y"), ore.get("element")
+        if (
+            isinstance(x, bool)
+            or not isinstance(x, int)
+            or isinstance(y, bool)
+            or not isinstance(y, int)
+            or not isinstance(element, str)
+            or not element
+            or (x, y) in seen
+            or cell_at_xy(rows, origin, x, y) != "#"
+        ):
+            continue
+
+        if isinstance(element_rows, list) and isinstance(legend, Mapping):
+            row, column = xy_to_row_col(x, y, origin, map_height=len(rows))
+            code = element_rows[row][column]
+            if legend.get(code) != element:
+                continue
+
+        seen.add((x, y))
+        valid.append(dict(ore))
+    return valid
