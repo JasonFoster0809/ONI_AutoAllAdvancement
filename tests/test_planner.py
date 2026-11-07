@@ -100,6 +100,37 @@ def metal_mining_state():
     }
 
 
+def load_bootstrap_catalog():
+    return json.loads(
+        (FIXTURES / "bootstrap_basics_catalog.json").read_text(encoding="utf-8")
+    )
+
+
+def bootstrap_state(*, gas_width=13, gas_height=5, oxygen=20, sand=650):
+    rows = ["." * 41 for _ in range(41)]
+    left = 20 - gas_width // 2
+    top = 21 - gas_height
+    for row_index in range(top, 21):
+        row = list(rows[row_index])
+        row[left : left + gas_width] = "G" * gas_width
+        rows[row_index] = "".join(row)
+    floor = list(rows[21])
+    floor[left : left + gas_width] = "#" * gas_width
+    rows[21] = "".join(floor)
+    return {
+        "cycle": 0,
+        "dupes": [{"name": f"Dupe {index}"} for index in range(2)],
+        "building_list": [],
+        "resources": {"materials": {"SandStone": sand, "Cuprite": 200}},
+        "environment": {"oxygen_avg_g": oxygen},
+        "world": {
+            "start": {"type": "telepad", "x": 0, "y": 0},
+            "origin": {"x": -20, "y": -20},
+            "map": rows,
+        },
+    }
+
+
 def test_research_goal_has_priority_over_barracks():
     step = next_step(
         load_fixture("goal_research_ready.json"),
@@ -454,6 +485,151 @@ def test_research_center_setup_pending_digs_wait_for_map_acknowledgment():
     )
     assert resumed["actions"][0]["type"] == "build"
     assert resumed["actions"][0]["id"] == "ResearchCenter"
+
+
+def test_bootstrap_basics_runs_after_research_center_setup():
+    goal_ids = planner.registered_goal_ids()
+
+    assert goal_ids.index("bootstrap_basics") == goal_ids.index("research_center_setup") + 1
+
+
+def test_bootstrap_basics_builds_beds_sanitation_and_oxygen_from_catalog():
+    state = bootstrap_state()
+    step = next_step(
+        state,
+        load_bootstrap_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["bootstrap_basics"],
+    )
+
+    assert step["goal_id"] == "bootstrap_basics"
+    assert [action["id"] for action in step["actions"]].count("Bed") == 2
+    assert [action["id"] for action in step["actions"]].count("Outhouse") == 1
+    assert [action["id"] for action in step["actions"]].count("WashBasin") == 1
+    assert [action["id"] for action in step["actions"]].count("MineralDeoxidizer") == 1
+    assert all(action["type"] == "build" for action in step["actions"])
+    assert all(action["elements"] for action in step["actions"])
+
+
+def test_bootstrap_basics_skips_with_material_shortfall_details():
+    step = next_step(
+        bootstrap_state(sand=500),
+        load_bootstrap_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["bootstrap_basics"],
+    )
+
+    assert step["goal_id"] == "no_goal"
+    reason = next(
+        item["reason"]
+        for item in step["skipped"]
+        if item["goal_id"] == "bootstrap_basics"
+    )
+    assert reason.startswith("insufficient_material:")
+    assert "need 600.0 kg" in reason
+    assert "available 500.0 kg" in reason
+
+
+def test_bootstrap_basics_reserves_shared_stock_across_catalog_categories():
+    state = bootstrap_state(sand=620)
+    state["resources"]["materials"]["ZincOre"] = 50
+    step = next_step(
+        state,
+        load_bootstrap_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["bootstrap_basics"],
+    )
+
+    assert step["goal_id"] == "bootstrap_basics"
+    basin = next(action for action in step["actions"] if action["id"] == "WashBasin")
+    assert basin["elements"] == ["ZincOre"]
+
+
+def test_bootstrap_basics_reports_remaining_shared_material_shortfall():
+    step = next_step(
+        bootstrap_state(sand=620),
+        load_bootstrap_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["bootstrap_basics"],
+    )
+
+    reason = next(
+        item["reason"]
+        for item in step["skipped"]
+        if item["goal_id"] == "bootstrap_basics"
+    )
+    assert "need 50.0 kg" in reason
+    assert "available 20.0 kg" in reason
+    assert "missing 30.0 kg" in reason
+
+
+def test_bootstrap_basics_does_not_dig_when_gas_pocket_is_too_small():
+    step = next_step(
+        bootstrap_state(gas_width=2, gas_height=3),
+        load_bootstrap_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["bootstrap_basics"],
+    )
+
+    assert step["goal_id"] == "no_goal"
+    assert step["actions"] == []
+    assert {
+        "goal_id": "bootstrap_basics",
+        "reason": "no_gas_placement:Bed",
+    } in step["skipped"]
+
+
+def test_bootstrap_basics_only_builds_deoxidizer_when_oxygen_rule_is_low():
+    step = next_step(
+        bootstrap_state(oxygen=100),
+        load_bootstrap_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["bootstrap_basics"],
+    )
+
+    assert step["goal_id"] == "bootstrap_basics"
+    assert all(action["id"] != "MineralDeoxidizer" for action in step["actions"])
+
+
+def test_bootstrap_basics_pending_and_cycle_cooldown():
+    state = bootstrap_state()
+    catalog = load_bootstrap_catalog()
+    pending_step = next_step(
+        state, catalog, CONFIG, {}, enabled_goals=["bootstrap_basics"]
+    )
+    pending = {}
+    mark_pending(
+        pending,
+        "bootstrap_basics",
+        pending_step["actions"],
+        submitted_step=1,
+        results=[{"ok": True} for _ in pending_step["actions"]],
+    )
+    repeated = next_step(
+        state, catalog, CONFIG, pending, enabled_goals=["bootstrap_basics"]
+    )
+    assert {"goal_id": "bootstrap_basics", "reason": "pending"} in repeated[
+        "skipped"
+    ]
+
+    cooldown = {**CONFIG, "goal_cooldowns": {"bootstrap_basics": 1}}
+    cooling = next_step(
+        state, catalog, cooldown, {}, enabled_goals=["bootstrap_basics"]
+    )
+    assert {"goal_id": "bootstrap_basics", "reason": "cooldown"} in cooling[
+        "skipped"
+    ]
+    state["cycle"] = 1
+    resumed = next_step(
+        state, catalog, cooldown, {}, enabled_goals=["bootstrap_basics"]
+    )
+    assert resumed["goal_id"] == "bootstrap_basics"
 
 
 def test_mine_metal_ore_digs_shortest_route_to_catalog_metal():

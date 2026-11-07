@@ -140,6 +140,72 @@ def test_dry_run_writes_jsonl_without_sending(tmp_path, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["step"] == 1
 
 
+def test_bootstrap_basics_dry_run_does_not_send_commands(tmp_path, monkeypatch):
+    rows = ["." * 41 for _ in range(41)]
+    for row_index in range(18, 21):
+        row = list(rows[row_index])
+        row[16:26] = "G" * 10
+        rows[row_index] = "".join(row)
+    floor = list(rows[21])
+    floor[16:26] = "#" * 10
+    rows[21] = "".join(floor)
+    (tmp_path / "oni_state.json").write_text(
+        json.dumps(
+            {
+                "cycle": 1,
+                "dupes": [{"name": "Fixture Dupe"}],
+                "building_list": [
+                    {"id": "ResearchCenter", "state": "built", "x": 0, "y": 0}
+                ],
+                "resources": {"materials": {"SandStone": 450}},
+                "environment": {"oxygen_avg_g": 100},
+                "world": {
+                    "start": {"type": "telepad", "x": 0, "y": 0},
+                    "origin": {"x": -20, "y": -20},
+                    "map": rows,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    fixtures = Path(__file__).parent / "fixtures"
+    (tmp_path / "oni_catalog.json").write_text(
+        (fixtures / "bootstrap_basics_catalog.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    log_path = tmp_path / "logs" / "agent.jsonl"
+    monkeypatch.setattr(agent_main, "LOG_PATH", log_path)
+    monkeypatch.setattr(
+        agent_main,
+        "send_command",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("dry-run must not send commands")
+        ),
+    )
+
+    assert agent_main.run(
+        [
+            "--dry-run",
+            "--manager",
+            "none",
+            "--max-steps",
+            "1",
+            "--data-dir",
+            str(tmp_path),
+            "--goals",
+            "bootstrap_basics",
+        ]
+    ) == 0
+
+    entry = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert entry["goal_id"] == "bootstrap_basics"
+    assert {action["id"] for action in entry["actions"]} == {
+        "Bed",
+        "Outhouse",
+        "WashBasin",
+    }
+
+
 def test_rule_replay_input_keeps_only_compact_summary_and_ready_or_active_techs():
     state = {
         "cycle": 12,
@@ -658,6 +724,7 @@ def test_strategist_goal_order_is_applied_by_planner(tmp_path, monkeypatch):
     assert [goal["id"] for goal in captured_prompts[0]["available_goals"]] == [
         "mine_metal_ore",
         "research_center_setup",
+        "bootstrap_basics",
         "research_chain",
         "research_target",
         "barracks",

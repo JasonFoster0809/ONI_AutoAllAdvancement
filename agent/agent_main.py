@@ -520,6 +520,7 @@ def run(argv: Sequence[str] | None = None) -> int:
     )
     rule_history: deque[Mapping[str, Any]] = deque(maxlen=3)
     pending: dict[str, dict[str, Any]] = {}
+    goal_cooldowns: dict[str, int] = {}
     rule_pending: dict[str, dict[str, Any]] = {}
     rule_cooldowns: dict[str, int] = {}
     emergency_pending: dict[str, dict[str, Any]] = {}
@@ -866,11 +867,20 @@ def run(argv: Sequence[str] | None = None) -> int:
                     selected = next_step(
                         state,
                         catalog,
-                        manager_config,
+                        {**manager_config, "goal_cooldowns": goal_cooldowns},
                         pending,
                         enabled_goals=manager_goal_ids,
                         alternatives=tied_steps,
                     )
+                    if cycle is not None and any(
+                        item.get("goal_id") == "bootstrap_basics"
+                        and item.get("reason") not in {
+                            "pending", "already_done", "cooldown"
+                        }
+                        for item in selected.get("skipped", [])
+                        if isinstance(item, Mapping)
+                    ):
+                        goal_cooldowns["bootstrap_basics"] = cycle + 1
                 if chosen_rule is None and tied_steps and not strategy_active:
                     candidates = [
                         {
@@ -915,6 +925,12 @@ def run(argv: Sequence[str] | None = None) -> int:
             actions = selected["actions"]
             if selected.get("goal_id") not in {None, "no_goal"}:
                 active_goal = selected["goal_id"]
+            if (
+                selected.get("goal_id") == "bootstrap_basics"
+                and actions
+                and cycle is not None
+            ):
+                goal_cooldowns["bootstrap_basics"] = cycle + 1
             emergency_category = selected.get("emergency_category")
             if emergency_category is not None and cycle is not None:
                 emergency_cooldowns[emergency_category] = (

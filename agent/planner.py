@@ -12,9 +12,11 @@ from .maputils import cell_at_xy, state_map
 from .skills import (
     SkillPlanningError,
     build_barracks,
+    build_bootstrap_basics,
     build_research_center_setup,
     mine_metal_ore,
 )
+from .rules import oxygen_rule
 
 
 IsDone = Callable[[Mapping[str, Any]], bool | None]
@@ -211,6 +213,46 @@ def _plan_mine_metal_ore(
     return mine_metal_ore(state, catalog, "ResearchCenter")
 
 
+def _bootstrap_basics_done(state: Mapping[str, Any]) -> bool | None:
+    dupes = state.get("dupes")
+    buildings = state.get("building_list")
+    if not isinstance(dupes, list) or not isinstance(buildings, list) or any(
+        not isinstance(building, Mapping) for building in buildings
+    ):
+        return None
+    counts = {
+        building_id: sum(
+            building.get("id") == building_id
+            and building.get("state") in {"built", "under_construction"}
+            for building in buildings
+        )
+        for building_id in ("Bed", "Outhouse", "WashBasin", "MineralDeoxidizer")
+    }
+    if (
+        counts["Bed"] < len(dupes)
+        or counts["Outhouse"] < 1
+        or counts["WashBasin"] < 1
+    ):
+        return False
+    return oxygen_rule(state) != "low_oxygen" or counts["MineralDeoxidizer"] >= 1
+
+
+def _plan_bootstrap_basics(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+    config: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    threshold = config.get("oxygen_min_g", 50.0)
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, (int, float))
+        or not math.isfinite(threshold)
+        or threshold < 0
+    ):
+        raise SkillPlanningError("oxygen_threshold_unknown")
+    return build_bootstrap_basics(state, catalog, oxygen_min_g=threshold)
+
+
 def barracks_done(state: Mapping[str, Any]) -> bool | None:
     if "rooms" not in state:
         return None
@@ -287,12 +329,21 @@ register_goal(
 )
 register_goal(
     Goal(
+        id="bootstrap_basics",
+        description="Build missing beds, sanitation, and oxygen basics in nearby gas space",
+        is_done=_bootstrap_basics_done,
+        plan=_plan_bootstrap_basics,
+    ),
+    rank=0,
+)
+register_goal(
+    Goal(
         id="research_chain",
         description="Select the next configured ready technology using basic research",
         is_done=lambda _state: False,
         plan=_plan_research_chain,
     ),
-    rank=0,
+    rank=1,
 )
 register_goal(
     Goal(
@@ -301,7 +352,7 @@ register_goal(
         is_done=_research_target_done,
         plan=_plan_research_target,
     ),
-    rank=1,
+    rank=2,
 )
 register_goal(
     Goal(
@@ -310,7 +361,7 @@ register_goal(
         is_done=barracks_done,
         plan=_plan_barracks,
     ),
-    rank=1,
+    rank=2,
 )
 
 
@@ -459,6 +510,22 @@ def next_step(
         if goal.id in pending:
             skipped.append({"goal_id": goal.id, "reason": "pending"})
             continue
+        goal_cooldowns = config.get("goal_cooldowns")
+        cycle = state.get("cycle")
+        cooldown_until = (
+            goal_cooldowns.get(goal.id)
+            if isinstance(goal_cooldowns, Mapping)
+            else None
+        )
+        if (
+            isinstance(cycle, int)
+            and not isinstance(cycle, bool)
+            and isinstance(cooldown_until, int)
+            and not isinstance(cooldown_until, bool)
+            and cycle < cooldown_until
+        ):
+            skipped.append({"goal_id": goal.id, "reason": "cooldown"})
+            continue
 
         try:
             done = goal.is_done(state)
@@ -478,7 +545,10 @@ def next_step(
                 continue
             choices.append((rank, goal, actions))
         except (SkillPlanningError, CatalogError) as error:
-            skipped.append({"goal_id": goal.id, "reason": error.reason})
+            reason = error.reason
+            if goal.id == "bootstrap_basics" and error.details:
+                reason = f"{reason}: {error.details}"
+            skipped.append({"goal_id": goal.id, "reason": reason})
         except Exception as error:
             skipped.append({"goal_id": goal.id, "reason": f"plan_error:{error}"})
 

@@ -27,6 +27,7 @@ from .maputils import (
     state_map,
     xy_to_row_col,
 )
+from .rules import oxygen_rule
 
 
 class SkillPlanningError(ValueError):
@@ -307,6 +308,96 @@ def build_oxygen_setup(
         raise SkillPlanningError("no_valid_placement")
     action = _build_action(deoxidizer, state, placement["x"], placement["y"])
     return SkillPlan([action], ["Algae_delivery_required_after_construction"])
+
+
+def build_bootstrap_basics(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+    *,
+    oxygen_min_g: float = 50.0,
+) -> list[dict[str, Any]]:
+    """Place missing beds and sanitation/oxygen buildings in supported gas cells."""
+    dupes = state.get("dupes")
+    if not isinstance(dupes, list):
+        raise SkillPlanningError("dupe_data_unavailable")
+    buildings = _known_buildings(state)
+    counts = {
+        building_id: sum(
+            item.get("id") == building_id
+            and item.get("state") in {"built", "under_construction"}
+            for item in buildings
+        )
+        for building_id in ("Bed", "Outhouse", "WashBasin", "MineralDeoxidizer")
+    }
+    required = [
+        ("Bed", max(0, len(_live_dupes(state)) - counts["Bed"])),
+        ("Outhouse", max(0, 1 - counts["Outhouse"])),
+        ("WashBasin", max(0, 1 - counts["WashBasin"])),
+    ]
+    if oxygen_rule(state, oxygen_min_g) == "low_oxygen":
+        required.append(("MineralDeoxidizer", max(0, 1 - counts["MineralDeoxidizer"])))
+    required = [(building_id, amount) for building_id, amount in required if amount]
+    if not required:
+        return []
+
+    rows, origin, center = _map_context(state)
+    if center is None:
+        raise SkillPlanningError("bootstrap_telepad_unknown")
+
+    placements: list[tuple[Mapping[str, Any], dict[str, int]]] = []
+    reserved: set[tuple[int, int]] = set()
+    for building_id, amount in required:
+        building = _get_building(catalog, building_id)
+        width, height = building_dimensions(building)
+        for _ in range(amount):
+            placement = next(
+                (
+                    candidate
+                    for candidate in find_empty_rectangle_candidates(
+                        rows,
+                        origin,
+                        width,
+                        height,
+                        center=center,
+                        reserved=reserved,
+                    )
+                    if candidate["row"] + 1 < len(rows)
+                    and all(
+                        cell_at_xy(rows, origin, x, y) == "G"
+                        for x in range(candidate["left_x"], candidate["left_x"] + width)
+                        for y in range(candidate["bottom_y"], candidate["bottom_y"] + height)
+                    )
+                    and all(
+                        rows[candidate["row"] + 1][column] in SOLID_MAP_CELLS
+                        for column in range(candidate["column"], candidate["column"] + width)
+                    )
+                ),
+                None,
+            )
+            if placement is None:
+                raise SkillPlanningError(f"no_gas_placement:{building_id}")
+            placements.append((building, placement))
+            reserved.update(
+                (x, y)
+                for x in range(placement["left_x"], placement["left_x"] + width)
+                for y in range(placement["bottom_y"], placement["bottom_y"] + height)
+            )
+
+    materials_by_key, selected_materials = _choose_combined_materials(
+        state,
+        [(building, 1) for building, _ in placements],
+    )
+
+    return [
+        _build_action(
+            building,
+            state,
+            placement["x"],
+            placement["y"],
+            _elements_for_building(building, materials_by_key, selected_materials),
+        )
+        for building, placement in placements
+    ]
 
 
 def build_mess_area(
@@ -1590,20 +1681,50 @@ def _choose_combined_materials(
                 groups[key] = group
             group["mass_kg"] += mass * count
 
-    categories = list(groups.values())
-    try:
-        selected = choose_materials({"materials": categories}, state)
-    except CatalogError as error:
-        if error.reason == "insufficient_material":
-            raise SkillPlanningError(
-                error.reason,
-                _material_shortfall_details(categories, state),
-            ) from error
-        raise SkillPlanningError(error.reason) from error
-
-    selected_by_key = {
-        key: element for key, element in zip(groups, selected)
+    resources = state.get("resources")
+    stock = resources.get("materials") if isinstance(resources, Mapping) else None
+    if not isinstance(stock, Mapping):
+        raise SkillPlanningError("material_inventory_unavailable")
+    remaining = {
+        name.casefold(): (name, amount)
+        for name, amount in stock.items()
+        if isinstance(name, str)
+        and not isinstance(amount, bool)
+        and isinstance(amount, (int, float))
+        and math.isfinite(amount)
+        and amount >= 0
     }
+
+    selected_by_key: dict[tuple[str, tuple[str, ...]], str] = {}
+    ordered_groups = sorted(groups.items(), key=lambda item: len(item[1]["options"]))
+    for key, group in ordered_groups:
+        required_mass = group["mass_kg"]
+        choice = next(
+            (
+                remaining[option.casefold()]
+                for option in group["options"]
+                if option.casefold() in remaining
+                and remaining[option.casefold()][1] >= required_mass
+            ),
+            None,
+        )
+        if choice is None:
+            remaining_state = {
+                "resources": {
+                    "materials": {
+                        name: amount for name, amount in remaining.values()
+                    }
+                }
+            }
+            raise SkillPlanningError(
+                "insufficient_material",
+                _material_shortfall_details([group], remaining_state),
+            )
+        selected_by_key[key] = choice[0]
+        remaining[choice[0].casefold()] = (
+            choice[0],
+            choice[1] - required_mass,
+        )
     return groups, selected_by_key
 
 
