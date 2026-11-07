@@ -122,3 +122,24 @@ def test_replay_marks_older_logs_unavailable_and_ignores_non_rule_rows(tmp_path)
 
     assert result["counts"] == {"match": 0, "mismatch": 0, "unavailable": 1}
     assert result["comparisons"][0]["reason"] == "rule_input_not_recorded"
+
+
+def test_replay_marks_compact_summary_input_unavailable(tmp_path):
+    log_path = tmp_path / "agent.jsonl"
+    log_path.write_text(
+        json.dumps(
+            {
+                "step": 1,
+                "selection_reason": "rule_engine",
+                "rule_id": "low-oxygen-setup",
+                "actions": [],
+                "rule_replay_input": {"summary_only": True, "state": {"cycle": 1}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = replay_log(log_path, [])
+
+    assert result["counts"] == {"match": 0, "mismatch": 0, "unavailable": 1}
+    assert result["comparisons"][0]["reason"] == "summary_only_rule_input"

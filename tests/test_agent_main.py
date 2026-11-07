@@ -135,7 +135,65 @@ def test_dry_run_writes_jsonl_without_sending(tmp_path, monkeypatch, capsys):
     assert entry["result"]["actions"] == [
         {"type": "set_research", "tech": "FarmingTech"}
     ]
+    assert entry["rule_replay_input"]["summary_only"] is True
+    assert "history" not in entry["rule_replay_input"]
     assert json.loads(capsys.readouterr().out)["step"] == 1
+
+
+def test_rule_replay_input_keeps_only_compact_summary_and_ready_or_active_techs():
+    state = {
+        "cycle": 12,
+        "environment": {"oxygen_avg_g": 483.5, "temperature_avg_k": 295},
+        "oxygen_air": 900,
+        "resources": {"food_kcal": 12000, "materials": {"Algae": 2, "Copper": 99}},
+        "dupes": [
+            {
+                "name": "Private name",
+                "calories_kcal": 400,
+                "stress": 20,
+                "room_type": "Barracks",
+                "bed_x": 1,
+                "bed_y": 2,
+                "job_priorities": {"dig": 9},
+            }
+        ],
+        "building_list": [{"id": "ResearchCenter", "state": "built", "x": 9}],
+        "research": {
+            "active": "RunningTech",
+            "techs": [
+                {"id": "ReadyTech", "ready": True, "complete": False, "unlocks": [], "name": "R", "cost": [{"large": "cost"}]},
+                {"id": "RunningTech", "ready": False, "complete": False, "unlocks": [], "name": "R", "cost": [{"large": "cost"}]},
+                {"id": "LockedTech", "ready": False, "complete": False, "unlocks": [], "name": "L"},
+            ],
+        },
+        "world": {"map": ["#" * 41 for _ in range(41)]},
+    }
+
+    replay_state = agent_main._rule_replay_state(state)
+
+    assert replay_state["research"] == {
+        "active": "RunningTech",
+        "techs": [
+            {"id": "ReadyTech", "ready": True, "complete": False, "unlocks": []},
+            {"id": "RunningTech", "ready": False, "complete": False, "unlocks": []},
+        ],
+    }
+    assert replay_state["cycle"] == 12
+    assert replay_state["environment"] == {"oxygen_avg_g": 483.5}
+    assert replay_state["resources"] == {"food_kcal": 12000}
+    assert replay_state["dupe_count"] == 1
+    assert replay_state["dupes"] == [
+        {
+            "calories_kcal": 400,
+            "stress": 20,
+            "room_type": "Barracks",
+            "bed_x": 1,
+            "bed_y": 2,
+        }
+    ]
+    assert replay_state["building_count"] == 1
+    assert "world" not in replay_state
+    assert len(json.dumps(replay_state)) < 1000
 
 
 def test_emergency_rule_runs_before_catalog_or_skills(tmp_path, monkeypatch):

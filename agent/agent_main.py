@@ -172,10 +172,12 @@ def load_agent_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
 def _state_summary(state: Mapping[str, Any]) -> dict[str, Any]:
     dupes = state.get("dupes")
     resources = state.get("resources")
+    buildings = state.get("building_list")
     metrics = state_metrics(state)
     return {
         "cycle": metrics["cycle"],
         "dupe_count": len(dupes) if isinstance(dupes, list) else None,
+        "building_count": len(buildings) if isinstance(buildings, list) else None,
         "oxygen_air": metrics["oxygen_g"],
         "oxygen_g": metrics["oxygen_g"],
         "food_kcal": resources.get("food_kcal") if isinstance(resources, Mapping) else None,
@@ -187,52 +189,65 @@ def _state_summary(state: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _rule_replay_state(state: Mapping[str, Any]) -> dict[str, Any]:
-    """Keep the minimal state fields needed to re-evaluate registered rules."""
-    snapshot: dict[str, Any] = {}
-    for key in ("cycle", "oxygen_air", "environment", "alerts"):
-        if key in state:
-            snapshot[key] = state[key]
-    resources = state.get("resources")
-    if isinstance(resources, Mapping):
-        snapshot["resources"] = {
-            key: resources[key]
-            for key in ("food_kcal", "materials")
-            if key in resources
-        }
-    research = state.get("research")
-    if isinstance(research, Mapping) and "techs" in research:
-        snapshot["research"] = {"techs": research["techs"]}
-    power = state.get("power")
-    if isinstance(power, Mapping):
-        snapshot["power"] = dict(power)
+    """Keep a compact metrics snapshot instead of copying the full game state."""
     dupes = state.get("dupes")
-    if isinstance(dupes, list):
-        dupe_fields = (
-            "name", "x", "y", "calories_kcal", "stress",
-            "job_priorities", "room_type", "bed_x", "bed_y", "room_x", "room_y",
-        )
-        snapshot["dupes"] = [
-            {key: dupe[key] for key in dupe_fields if key in dupe}
-            if isinstance(dupe, Mapping)
-            else dupe
-            for dupe in dupes
-        ]
+    resources = state.get("resources")
+    environment = state.get("environment")
+    research = state.get("research")
     buildings = state.get("building_list")
-    if isinstance(buildings, list):
-        building_fields = ("id", "x", "y", "state", "stored", "powered")
-        snapshot["building_list"] = [
-            {key: building[key] for key in building_fields if key in building}
-            if isinstance(building, Mapping)
-            else building
-            for building in buildings
+    active_tech = research.get("active") if isinstance(research, Mapping) else None
+    techs = research.get("techs") if isinstance(research, Mapping) else None
+    compact_techs = []
+    if isinstance(techs, list):
+        compact_techs = [
+            {
+                key: tech[key]
+                for key in ("id", "ready", "complete", "unlocks")
+                if key in tech
+            }
+            for tech in techs
+            if isinstance(tech, Mapping)
+            and (
+                tech.get("ready") is True
+                or (
+                    isinstance(active_tech, str)
+                    and tech.get("id") == active_tech
+                )
+            )
         ]
-    world = state.get("world")
-    if isinstance(world, Mapping):
-        snapshot["world"] = {
-            key: world[key]
-            for key in ("origin", "start", "map")
-            if key in world
-        }
+
+    oxygen = (
+        environment.get("oxygen_avg_g")
+        if isinstance(environment, Mapping)
+        else None
+    )
+    if oxygen is None:
+        oxygen = state_metrics(state)["oxygen_g"]
+    food_kcal = resources.get("food_kcal") if isinstance(resources, Mapping) else None
+    compact_dupes = []
+    if isinstance(dupes, list):
+        dupe_fields = ("calories_kcal", "stress", "room_type", "bed_x", "bed_y")
+        compact_dupes = [
+            {key: dupe[key] for key in dupe_fields if key in dupe}
+            for dupe in dupes
+            if isinstance(dupe, Mapping)
+        ]
+
+    snapshot: dict[str, Any] = {
+        "cycle": state.get("cycle"),
+        "oxygen_air": oxygen,
+        "environment": {"oxygen_avg_g": oxygen},
+        "resources": {"food_kcal": food_kcal},
+        "dupe_count": len(dupes) if isinstance(dupes, list) else None,
+        "dupes": compact_dupes,
+        "building_count": len(buildings) if isinstance(buildings, list) else None,
+        "research": {"active": active_tech, "techs": compact_techs},
+        "alerts": [
+            {"type": alert["type"]}
+            for alert in state.get("alerts", [])
+            if isinstance(alert, Mapping) and isinstance(alert.get("type"), str)
+        ] if isinstance(state.get("alerts"), list) else [],
+    }
     return snapshot
 
 
@@ -741,8 +756,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                     oxygen_min_g=config["oxygen_min_g"],
                 )
                 rule_replay_input = {
+                    "summary_only": True,
                     "state": _rule_replay_state(state),
-                    "history": [_rule_replay_state(sample) for sample in rule_history],
                     "pending": _copy_pending(rule_pending),
                     "cooldowns": dict(rule_cooldowns),
                     "skill_config": {

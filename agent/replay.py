@@ -58,6 +58,16 @@ def replay_log(
                 }
             )
             continue
+        if replay_input.get("summary_only") is True:
+            comparisons.append(
+                {
+                    "step": step,
+                    "logged_rule": rule_id,
+                    "status": "unavailable",
+                    "reason": "summary_only_rule_input",
+                }
+            )
+            continue
         state = replay_input.get("state")
         if not isinstance(state, Mapping):
             comparisons.append(
