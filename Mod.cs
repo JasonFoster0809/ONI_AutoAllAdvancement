@@ -239,6 +239,24 @@ namespace OniAgent
                 {
                     Debug.LogWarning("[OniAgent] Could not read active world map: " + e);
                 }
+
+                try
+                {
+                    AppendElementMap(sb, ref hasWorldProperty, activeWorld, startX, startY);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("[OniAgent] Could not read active world element map: " + e);
+                }
+
+                try
+                {
+                    AppendMetalOres(sb, ref hasWorldProperty, activeWorld, startX, startY);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("[OniAgent] Could not read active world metal ores: " + e);
+                }
             }
             sb.Append("}");
 
@@ -3247,6 +3265,166 @@ namespace OniAgent
             return '.';
         }
 
+        private static void AppendElementMap(
+            StringBuilder sb,
+            ref bool hasWorldProperty,
+            WorldContainer world,
+            int centerX,
+            int centerY)
+        {
+            const int radius = 20;
+            const string legendSymbols = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            var symbolByElement = new Dictionary<string, char>(StringComparer.Ordinal);
+            var elementMapRows = new List<string>(41);
+            for (int row = 0; row < 41; row++)
+            {
+                int y = centerY - radius + (40 - row);
+                var mapRow = new StringBuilder(41);
+                for (int column = 0; column < 41; column++)
+                {
+                    int x = centerX - radius + column;
+                    if (GetMapCell(world, x, y) != '#')
+                    {
+                        mapRow.Append('.');
+                        continue;
+                    }
+
+                    int cell = Grid.XYToCell(x, y);
+                    var element = Grid.Element[cell];
+                    if (element == null || element.tag == null ||
+                        string.IsNullOrEmpty(element.tag.Name))
+                    {
+                        throw new InvalidOperationException(
+                            "A solid map cell has no resolvable element tag.");
+                    }
+
+                    string elementName = element.tag.Name;
+                    if (!symbolByElement.TryGetValue(elementName, out char symbol))
+                    {
+                        if (symbolByElement.Count >= legendSymbols.Length)
+                        {
+                            throw new InvalidOperationException(
+                                "The element legend exceeds its supported symbol count.");
+                        }
+                        symbol = legendSymbols[symbolByElement.Count];
+                        symbolByElement.Add(elementName, symbol);
+                    }
+                    mapRow.Append(symbol);
+                }
+                elementMapRows.Add(mapRow.ToString());
+            }
+
+            var fields = new StringBuilder();
+            fields.Append("\"element_map\":[");
+            for (int row = 0; row < elementMapRows.Count; row++)
+            {
+                if (row > 0)
+                {
+                    fields.Append(",");
+                }
+                fields.Append("\"").Append(elementMapRows[row]).Append("\"");
+            }
+            fields.Append("],\"element_legend\":{");
+            bool hasLegendEntry = false;
+            foreach (var entry in symbolByElement)
+            {
+                if (hasLegendEntry)
+                {
+                    fields.Append(",");
+                }
+                hasLegendEntry = true;
+                fields.Append("\"").Append(entry.Value).Append("\":\"")
+                    .Append(EscapeJsonString(entry.Key)).Append("\"");
+            }
+            fields.Append("}");
+
+            if (hasWorldProperty)
+            {
+                sb.Append(",");
+            }
+            sb.Append(fields);
+            hasWorldProperty = true;
+        }
+
+        private static void AppendMetalOres(
+            StringBuilder sb,
+            ref bool hasWorldProperty,
+            WorldContainer world,
+            int centerX,
+            int centerY)
+        {
+            const int radius = 20;
+            const int maximumOres = 50;
+            var ores = new List<MetalOreEntry>();
+            for (int row = 0; row < 41; row++)
+            {
+                int y = centerY - radius + (40 - row);
+                for (int column = 0; column < 41; column++)
+                {
+                    int x = centerX - radius + column;
+                    if (GetMapCell(world, x, y) != '#')
+                    {
+                        continue;
+                    }
+
+                    int cell = Grid.XYToCell(x, y);
+                    var element = Grid.Element[cell];
+                    if (element == null ||
+                        !element.IsSolid ||
+                        element.materialCategory != GameTags.Metal ||
+                        !element.HasTag(GameTags.Ore) ||
+                        element.disabled ||
+                        element.tag == null ||
+                        string.IsNullOrEmpty(element.tag.Name))
+                    {
+                        continue;
+                    }
+
+                    ores.Add(new MetalOreEntry
+                    {
+                        X = x,
+                        Y = y,
+                        Element = element.tag.Name,
+                        Distance = Math.Abs(x - centerX) + Math.Abs(y - centerY)
+                    });
+                }
+            }
+
+            ores.Sort((left, right) =>
+            {
+                int distanceOrder = left.Distance.CompareTo(right.Distance);
+                if (distanceOrder != 0)
+                {
+                    return distanceOrder;
+                }
+                int yOrder = left.Y.CompareTo(right.Y);
+                return yOrder != 0 ? yOrder : left.X.CompareTo(right.X);
+            });
+            if (ores.Count > maximumOres)
+            {
+                ores.RemoveRange(maximumOres, ores.Count - maximumOres);
+            }
+
+            var value = new StringBuilder("[");
+            for (int i = 0; i < ores.Count; i++)
+            {
+                if (i > 0)
+                {
+                    value.Append(",");
+                }
+                var ore = ores[i];
+                value.Append("{\"x\":").Append(ore.X)
+                    .Append(",\"y\":").Append(ore.Y)
+                    .Append(",\"element\":\"").Append(EscapeJsonString(ore.Element))
+                    .Append("\",\"distance_from_telepad\":").Append(ore.Distance)
+                    .Append("}");
+            }
+            value.Append("]");
+
+            AppendPropertyPrefix(sb, ref hasWorldProperty, "metal_ores");
+            sb.Append(value);
+        }
+
         private static void AppendNumberProperty(StringBuilder sb, ref bool hasProperty, string name, int value)
         {
             AppendPropertyPrefix(sb, ref hasProperty, name);
@@ -3603,6 +3781,14 @@ namespace OniAgent
         public bool HasRelativePosition;
         public int RelativeX;
         public int RelativeY;
+    }
+
+    internal sealed class MetalOreEntry
+    {
+        public int X;
+        public int Y;
+        public string Element;
+        public int Distance;
     }
 
     internal sealed class AgentAction
