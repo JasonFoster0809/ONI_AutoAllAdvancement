@@ -16,6 +16,7 @@ from .catalog import (
 )
 from .maputils import (
     BUILDABLE_MAP_CELLS,
+    SOLID_MAP_CELLS,
     cell_at_xy,
     find_empty_rectangle,
     find_empty_rectangle_candidates,
@@ -1749,6 +1750,139 @@ def build_research_area(
     if placement is None:
         raise SkillPlanningError("no_valid_placement")
     return [_build_action(building, state, placement["x"], placement["y"])]
+
+
+def build_research_center_setup(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+    research_center_id: str,
+    *,
+    max_dig_actions: int = 6,
+    avoid_radius: int = 4,
+) -> list[dict[str, Any]]:
+    """Dig a reachable, supported ResearchCenter footprint or build it when clear."""
+    building = _get_building(catalog, research_center_id)
+    width, height = building_dimensions(building)
+    if (width, height) != (2, 2):
+        raise SkillPlanningError("invalid_research_center_dimensions")
+    if max_dig_actions <= 0 or avoid_radius < 0:
+        raise SkillPlanningError("invalid_research_center_limits")
+
+    materials = building.get("materials")
+    if not isinstance(materials, list) or not any(
+        isinstance(category, Mapping)
+        and isinstance(category.get("category"), str)
+        and "metal" in category["category"].casefold()
+        for category in materials
+    ):
+        raise SkillPlanningError("research_center_metal_category_unknown")
+    try:
+        elements = _get_materials(building, state)
+    except SkillPlanningError as error:
+        if error.reason == "insufficient_material":
+            raise SkillPlanningError(
+                "research_center_metal_material_unavailable"
+            ) from error
+        raise
+
+    rows, origin, center = _map_context(state)
+    if center is None:
+        raise SkillPlanningError("research_center_telepad_unknown")
+    map_width = len(rows[0])
+    map_height = len(rows)
+
+    reachable: set[tuple[int, int]] = set()
+    start_cell = cell_at_xy(rows, origin, center[0], center[1])
+    start_cells = (
+        [center]
+        if start_cell == "G"
+        else [
+            (center[0] + dx, center[1] + dy)
+            for dx, dy in ((0, -1), (-1, 0), (1, 0), (0, 1))
+            if cell_at_xy(rows, origin, center[0] + dx, center[1] + dy) == "G"
+        ]
+    )
+    pending_cells = list(start_cells)
+    reachable.update(start_cells)
+    while pending_cells:
+        x, y = pending_cells.pop()
+        for dx, dy in ((0, -1), (-1, 0), (1, 0), (0, 1)):
+            neighbor = (x + dx, y + dy)
+            if neighbor in reachable or cell_at_xy(rows, origin, *neighbor) != "G":
+                continue
+            reachable.add(neighbor)
+            pending_cells.append(neighbor)
+
+    candidates: list[
+        tuple[int, int, int, int, list[tuple[int, int]], int, int]
+    ] = []
+    for bottom_row in range(map_height - 1, height - 2, -1):
+        top_row = bottom_row - height + 1
+        bottom_y = origin["y"] + map_height - 1 - bottom_row
+        for left_column in range(map_width - width + 1):
+            left_x = origin["x"] + left_column
+            footprint = [
+                (left_x + dx, bottom_y + dy)
+                for dy in range(height)
+                for dx in range(width)
+            ]
+            cells = [cell_at_xy(rows, origin, x, y) for x, y in footprint]
+            if any(cell not in ("G", "#") for cell in cells):
+                continue
+            floor_y = bottom_y - 1
+            if any(
+                cell_at_xy(rows, origin, x, floor_y) not in SOLID_MAP_CELLS
+                for x, _ in footprint[:width]
+            ):
+                continue
+            if any(
+                cell_at_xy(rows, origin, x, y) in ("L", "V")
+                for x in range(left_x - avoid_radius, left_x + width + avoid_radius)
+                for y in range(
+                    bottom_y - avoid_radius,
+                    bottom_y + height + avoid_radius,
+                )
+            ):
+                continue
+            missing = [
+                position
+                for position, cell in zip(footprint, cells)
+                if cell == "#"
+            ]
+            if len(missing) > max_dig_actions:
+                continue
+            is_reachable = any(position in reachable for position in footprint)
+            can_reach_excavation = any(
+                (x + dx, y + dy) in reachable
+                for x, y in footprint
+                for dx, dy in ((0, -1), (-1, 0), (1, 0), (0, 1))
+            )
+            if not is_reachable and not can_reach_excavation:
+                continue
+
+            pivot_x = left_x + (width // 2 if width % 2 else width // 2 - 1)
+            distance = abs(pivot_x - center[0]) + abs(bottom_y - center[1])
+            candidates.append(
+                (
+                    len(missing),
+                    distance,
+                    bottom_row,
+                    left_column,
+                    missing,
+                    pivot_x,
+                    bottom_y,
+                )
+            )
+
+    if not candidates:
+        raise SkillPlanningError("no_reachable_research_center_placement")
+    _, _, _, _, missing, pivot_x, bottom_y = min(candidates)
+    if missing:
+        return [
+            {"type": "dig", "x": x, "y": y}
+            for x, y in sorted(missing, key=lambda position: (position[1], position[0]))
+        ]
+    return [_build_action(building, state, pivot_x, bottom_y, elements)]
 
 
 def dig_corridor(

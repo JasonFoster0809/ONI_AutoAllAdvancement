@@ -8,7 +8,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from .catalog import CatalogError, building_dimensions, get_building
-from .skills import SkillPlanningError, build_barracks
+from .maputils import cell_at_xy, state_map
+from .skills import (
+    SkillPlanningError,
+    build_barracks,
+    build_research_center_setup,
+)
 
 
 IsDone = Callable[[Mapping[str, Any]], bool | None]
@@ -165,6 +170,38 @@ def _plan_research_chain(
     raise SkillPlanningError("no_basic_ready_tech")
 
 
+def _research_center_setup_done(state: Mapping[str, Any]) -> bool | None:
+    buildings = state.get("building_list")
+    if not isinstance(buildings, list):
+        return None
+    if any(not isinstance(building, Mapping) for building in buildings):
+        return None
+    return any(
+        building.get("id") == "ResearchCenter"
+        and building.get("state") == "built"
+        for building in buildings
+    )
+
+
+def _plan_research_center_setup(
+    state: Mapping[str, Any],
+    catalog: Sequence[Mapping[str, Any]],
+    _config: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    buildings = state.get("building_list")
+    if not isinstance(buildings, list) or any(
+        not isinstance(building, Mapping) for building in buildings
+    ):
+        raise SkillPlanningError("research_building_list_unknown")
+    if any(
+        building.get("id") == "ResearchCenter"
+        and building.get("state") in ("built", "under_construction")
+        for building in buildings
+    ):
+        raise SkillPlanningError("research_center_already_present")
+    return build_research_center_setup(state, catalog, "ResearchCenter")
+
+
 def barracks_done(state: Mapping[str, Any]) -> bool | None:
     if "rooms" not in state:
         return None
@@ -221,6 +258,15 @@ def registered_goal_ids() -> list[str]:
     return [goal.id for goal in GOALS]
 
 
+register_goal(
+    Goal(
+        id="research_center_setup",
+        description="Clear a reachable supported site and build a ResearchCenter",
+        is_done=_research_center_setup_done,
+        plan=_plan_research_center_setup,
+    ),
+    rank=-1,
+)
 register_goal(
     Goal(
         id="research_chain",
@@ -307,6 +353,19 @@ def _pending_action_present(
     state: Mapping[str, Any],
     catalog: Sequence[Mapping[str, Any]],
 ) -> bool:
+    if action.get("type") == "dig":
+        x, y = action.get("x"), action.get("y")
+        if not all(
+            isinstance(value, int) and not isinstance(value, bool)
+            for value in (x, y)
+        ):
+            return False
+        try:
+            rows, origin = state_map(state)
+            cell = cell_at_xy(rows, origin, x, y)
+        except (KeyError, TypeError, ValueError):
+            return False
+        return cell is not None and cell != "#"
     return any(
         _building_matches_action(entry, action, catalog)
         for entry in _building_list(state)
@@ -431,10 +490,12 @@ def mark_pending(
     submitted_step: int,
     results: Sequence[Mapping[str, Any]] | None = None,
 ) -> None:
-    """Track only build actions the mod reported as accepted."""
+    """Track accepted builds and research-site digs until state acknowledges them."""
     accepted: list[dict[str, Any]] = []
     for index, action in enumerate(actions):
-        if action.get("type") != "build":
+        if action.get("type") != "build" and not (
+            goal_id == "research_center_setup" and action.get("type") == "dig"
+        ):
             continue
         if results is not None:
             if index >= len(results) or results[index].get("ok") is not True:

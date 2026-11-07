@@ -4,7 +4,12 @@ from pathlib import Path
 import pytest
 
 from agent import planner
-from agent.planner import Goal, mark_pending, next_step, update_pending
+from agent.planner import (
+    Goal,
+    mark_pending,
+    next_step,
+    update_pending,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -36,6 +41,32 @@ def load_fixture(name):
 
 def load_catalog():
     return json.loads((FIXTURES / "goal_catalog.json").read_text(encoding="utf-8"))
+
+
+def research_center_setup_state(*, clear_footprint=False):
+    rows = ["." * 12 for _ in range(10)]
+    rows[8] = "..##" + "." * 8
+    footprint_row = "..GG" + "." * 8 if clear_footprint else ".G##" + "." * 8
+    rows[7] = footprint_row
+    rows[6] = footprint_row
+    return {
+        "cycle": 0,
+        "building_list": [],
+        "resources": {"materials": {"Cuprite": 400}},
+        "world": {
+            "start": {"type": "telepad", "x": 1, "y": 2},
+            "origin": {"x": 0, "y": 0},
+            "map": rows,
+        },
+    }
+
+
+def load_research_center_catalog():
+    return json.loads(
+        (FIXTURES / "research_center_setup_catalog.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
 
 def test_research_goal_has_priority_over_barracks():
@@ -241,6 +272,157 @@ def test_barracks_goal_plans_enclosed_room_when_not_built():
     assert sum(action["id"] == "Bed" for action in step["actions"]) == 2
     assert sum(action["id"] == "Door" for action in step["actions"]) == 1
     assert all(action["type"] == "build" for action in step["actions"])
+
+
+def test_research_center_setup_digs_only_missing_footprint_cells():
+    state = research_center_setup_state()
+    step = next_step(
+        state,
+        load_research_center_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["research_center_setup"],
+    )
+
+    assert step["goal_id"] == "research_center_setup"
+    assert step["actions"] == [
+        {"type": "dig", "x": 2, "y": 2},
+        {"type": "dig", "x": 3, "y": 2},
+        {"type": "dig", "x": 2, "y": 3},
+        {"type": "dig", "x": 3, "y": 3},
+    ]
+    assert len(step["actions"]) <= 6
+
+
+def test_research_center_setup_builds_when_supported_footprint_is_gas():
+    state = research_center_setup_state(clear_footprint=True)
+    step = next_step(
+        state,
+        load_research_center_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["research_center_setup"],
+    )
+
+    assert step["goal_id"] == "research_center_setup"
+    assert step["actions"] == [
+        {
+            "type": "build",
+            "id": "ResearchCenter",
+            "x": 2,
+            "y": 2,
+            "orientation": "Neutral",
+            "elements": ["Cuprite"],
+            "priority": 5,
+        }
+    ]
+
+
+def test_research_center_setup_blocks_without_metal_stock():
+    state = research_center_setup_state(clear_footprint=True)
+    state["resources"]["materials"] = {}
+    step = next_step(
+        state,
+        load_research_center_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["research_center_setup"],
+    )
+
+    assert step["goal_id"] == "no_goal"
+    assert {
+        "goal_id": "research_center_setup",
+        "reason": "research_center_metal_material_unavailable",
+    } in step["skipped"]
+
+
+def test_research_center_setup_rejects_vacuum_near_candidate():
+    state = research_center_setup_state()
+    rows = state["world"]["map"]
+    rows[2] = rows[2][:7] + "V" + rows[2][8:]
+    step = next_step(
+        state,
+        load_research_center_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["research_center_setup"],
+    )
+
+    assert step["goal_id"] == "no_goal"
+    assert {
+        "goal_id": "research_center_setup",
+        "reason": "no_reachable_research_center_placement",
+    } in step["skipped"]
+
+
+def test_research_center_setup_is_done_when_center_is_built():
+    state = research_center_setup_state()
+    state["building_list"] = [
+        {"id": "ResearchCenter", "state": "built", "x": 2, "y": 2}
+    ]
+    step = next_step(
+        state,
+        load_research_center_catalog(),
+        CONFIG,
+        {},
+        enabled_goals=["research_center_setup"],
+    )
+
+    assert step["goal_id"] == "no_goal"
+    assert {
+        "goal_id": "research_center_setup",
+        "reason": "already_done",
+    } in step["skipped"]
+
+
+def test_research_center_setup_pending_digs_wait_for_map_acknowledgment():
+    state = research_center_setup_state()
+    catalog = load_research_center_catalog()
+    step = next_step(
+        state,
+        catalog,
+        CONFIG,
+        {},
+        enabled_goals=["research_center_setup"],
+    )
+    pending = {}
+    mark_pending(
+        pending,
+        step["goal_id"],
+        step["actions"],
+        submitted_step=1,
+        results=[{"ok": True} for _ in step["actions"]],
+    )
+
+    repeated = next_step(
+        state,
+        catalog,
+        CONFIG,
+        pending,
+        enabled_goals=["research_center_setup"],
+    )
+    assert repeated["goal_id"] == "no_goal"
+    assert {"goal_id": "research_center_setup", "reason": "pending"} in repeated[
+        "skipped"
+    ]
+
+    for action in step["actions"]:
+        row = len(state["world"]["map"]) - 1 - action["y"]
+        column = action["x"]
+        map_row = state["world"]["map"][row]
+        state["world"]["map"][row] = (
+            map_row[:column] + "G" + map_row[column + 1 :]
+        )
+    update_pending(state, pending, step=2, max_steps=30, catalog=catalog)
+    resumed = next_step(
+        state,
+        catalog,
+        CONFIG,
+        pending,
+        enabled_goals=["research_center_setup"],
+    )
+    assert resumed["actions"][0]["type"] == "build"
+    assert resumed["actions"][0]["id"] == "ResearchCenter"
 
 
 def test_done_and_pending_goals_are_skipped():

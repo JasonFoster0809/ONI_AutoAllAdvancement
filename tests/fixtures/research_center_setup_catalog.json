@@ -1,0 +1,15 @@
+[
+  {
+    "id": "ResearchCenter",
+    "unlocked": true,
+    "width": 2,
+    "height": 2,
+    "materials": [
+      {
+        "category": "Metal",
+        "mass_kg": 400,
+        "options": ["ZincOre", "Cuprite"]
+      }
+    ]
+  }
+]
