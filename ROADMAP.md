@@ -89,11 +89,13 @@ before relying on automation; no game was launched for this work.
   per cycle, and latest dupe count. Latest observed cycle is not a death
   cycle; dry-run does not count as a command result.
 
-Only `research_target` and `barracks` are currently registered planner goals;
-achievement-specific goal coverage and the generated-skill factory remain
-unimplemented for later stages. Remaining work is to test generated build
-layouts, storage status, event logging, power connections, and file exchange
-in a disposable live colony.
+Planner goals include `research_chain`, the legacy `research_target`, and
+`barracks`. `research_chain` follows the editable `research_chain_order` in
+`agent/config.json` and only submits ready technologies whose recorded cost
+types are all basic. Achievement-specific goal coverage and the
+generated-skill factory remain unimplemented for later stages. Remaining work
+is to test generated build layouts, storage status, event logging, power
+connections, and file exchange in a disposable live colony.
 The user-reported MineralDeoxidizer Algae use of approximately 0.08–0.22 kg/s
 conflicts with the decompiled 0.55 kg/s configured rate; the actual runtime
 throughput remains **TODO_VERIFY** and is not an agent constant.

@@ -112,6 +112,14 @@ def load_agent_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
         or any(not isinstance(tech_id, str) or not tech_id for tech_id in config["priority_techs"])
     ):
         raise ValueError("priority_techs must be an array of non-empty strings")
+    if "research_chain_order" in config and (
+        not isinstance(config["research_chain_order"], list)
+        or any(
+            not isinstance(tech_id, str) or not tech_id
+            for tech_id in config["research_chain_order"]
+        )
+    ):
+        raise ValueError("research_chain_order must be an array of non-empty strings")
     pending_steps = config["pending_steps"]
     if isinstance(pending_steps, bool) or not isinstance(pending_steps, int) or pending_steps <= 0:
         raise ValueError("pending_steps must be a positive integer")

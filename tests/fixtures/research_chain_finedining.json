@@ -1,0 +1,24 @@
+{
+  "cycle": 6,
+  "research": {
+    "active": null,
+    "techs": [
+      {
+        "id": "FineDining",
+        "complete": false,
+        "ready": true,
+        "cost": [
+          {"type": "basic", "required": 20, "current": 20}
+        ]
+      },
+      {
+        "id": "PowerRegulation",
+        "complete": false,
+        "ready": false,
+        "cost": [
+          {"type": "basic", "required": 20, "current": 0}
+        ]
+      }
+    ]
+  }
+}

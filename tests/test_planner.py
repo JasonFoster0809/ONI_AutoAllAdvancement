@@ -16,6 +16,18 @@ CONFIG = {
     "tile_id": "Tile",
     "barracks_bed_count": 2,
 }
+RESEARCH_CHAIN_CONFIG = {
+    **CONFIG,
+    "research_chain_order": [
+        "FineDining",
+        "PowerRegulation",
+        "LiquidPiping",
+        "GasPiping",
+        "MedicineI",
+        "BasicRefinement",
+        "InteriorDecor",
+    ],
+}
 
 
 def load_fixture(name):
@@ -35,6 +47,117 @@ def test_research_goal_has_priority_over_barracks():
     )
     assert step["goal_id"] == "research_target"
     assert step["actions"] == [{"type": "set_research", "tech": "FarmingTech"}]
+
+
+def test_research_chain_selects_first_configured_ready_basic_tech():
+    state = load_fixture("research_chain_finedining.json")
+
+    step = next_step(
+        state,
+        load_catalog(),
+        RESEARCH_CHAIN_CONFIG,
+        {},
+        enabled_goals=["research_chain"],
+    )
+
+    assert step["goal_id"] == "research_chain"
+    assert step["actions"] == [{"type": "set_research", "tech": "FineDining"}]
+    assert set(step["actions"][0]) == {"type", "tech"}
+
+
+def test_research_chain_order_is_read_from_agent_config():
+    config = json.loads(
+        (Path(__file__).parent.parent / "agent" / "config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert config["research_chain_order"] == RESEARCH_CHAIN_CONFIG["research_chain_order"]
+
+
+def test_research_chain_skips_while_another_tech_is_active():
+    state = load_fixture("research_chain_finedining.json")
+    state["research"]["active"] = "SomeCurrentTech"
+
+    step = next_step(
+        state,
+        load_catalog(),
+        RESEARCH_CHAIN_CONFIG,
+        {},
+        enabled_goals=["research_chain"],
+    )
+
+    assert step["goal_id"] == "no_goal"
+    assert {
+        "goal_id": "research_chain",
+        "reason": "research_already_active",
+    } in step["skipped"]
+
+
+def test_research_chain_empty_order_is_a_noop_with_reason():
+    state = load_fixture("research_chain_finedining.json")
+    config = {**RESEARCH_CHAIN_CONFIG, "research_chain_order": []}
+
+    step = next_step(
+        state, load_catalog(), config, {}, enabled_goals=["research_chain"]
+    )
+
+    assert step["goal_id"] == "no_goal"
+    assert {
+        "goal_id": "research_chain",
+        "reason": "research_chain_order_empty",
+    } in step["skipped"]
+
+
+def test_research_chain_skips_non_basic_costs():
+    state = load_fixture("research_chain_finedining.json")
+    state["research"]["techs"][0]["cost"][0]["type"] = "advanced"
+
+    step = next_step(
+        state,
+        load_catalog(),
+        RESEARCH_CHAIN_CONFIG,
+        {},
+        enabled_goals=["research_chain"],
+    )
+
+    assert step["goal_id"] == "no_goal"
+    assert step["actions"] == []
+    assert {
+        "goal_id": "research_chain",
+        "reason": "no_basic_ready_tech",
+    } in step["skipped"]
+
+
+def test_research_chain_missing_data_is_unknown_and_never_sends():
+    state = load_fixture("research_chain_finedining.json")
+    del state["research"]["active"]
+    step = next_step(
+        state,
+        load_catalog(),
+        RESEARCH_CHAIN_CONFIG,
+        {},
+        enabled_goals=["research_chain"],
+    )
+    assert step["goal_id"] == "no_goal"
+    assert {
+        "goal_id": "research_chain",
+        "reason": "research_status_unknown",
+    } in step["skipped"]
+
+    state = load_fixture("research_chain_finedining.json")
+    del state["research"]["techs"][0]["cost"]
+    step = next_step(
+        state,
+        load_catalog(),
+        RESEARCH_CHAIN_CONFIG,
+        {},
+        enabled_goals=["research_chain"],
+    )
+    assert step["goal_id"] == "no_goal"
+    assert {
+        "goal_id": "research_chain",
+        "reason": "research_cost_unknown",
+    } in step["skipped"]
 
 
 def test_barracks_goal_plans_enclosed_room_when_not_built():

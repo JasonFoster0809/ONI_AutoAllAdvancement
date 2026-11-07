@@ -99,7 +99,9 @@ one rotated `.1` backup.
   Implemented plans include oxygen setup, a tiled Latrine footprint, a
   DiningTable mess area, a ManualGenerator/Wire/Battery layout,
   LiquidPumpingStation/WashBasin water setup, PlanterBox, MassageTable,
-  StorageLocker, and the existing Barracks and research planners.
+  StorageLocker, Barracks, and the `research_chain` planner. The research
+  chain is configured through `agent/config.json` and only starts a ready
+  technology when all recorded cost types are basic.
 - `--dry-run` prints and logs proposed actions without writing command files.
 - `agent.diagnostics` emits a Markdown report from the agent log and one
   current state snapshot. Trend checks require telemetry in recent logs;

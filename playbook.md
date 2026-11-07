@@ -41,6 +41,10 @@ they depend on traits, building configuration, or game version.
      required material and that the desired tech is available.
    - Check the `research` state for prerequisites, target, active research,
      and remaining point types before changing the target.
+   - The planner goal `research_chain` reads its ordered candidates from
+     `agent/config.json` (`research_chain_order`). It starts only a ready,
+     incomplete candidate whose recorded costs are all `basic`; missing state
+     data and active research produce a skipped reason, not a command.
 
 5. **Barracks**
    - The user's in-game tooltip reports that a Barracks needs one or more

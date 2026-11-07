@@ -1,5 +1,14 @@
 {
   "priority_techs": ["FarmingTech"],
+  "research_chain_order": [
+    "FineDining",
+    "PowerRegulation",
+    "LiquidPiping",
+    "GasPiping",
+    "MedicineI",
+    "BasicRefinement",
+    "InteriorDecor"
+  ],
   "pending_steps": 30,
   "bed_id": "Bed",
   "door_id": "Door",

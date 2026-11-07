@@ -598,6 +598,7 @@ def test_strategist_goal_order_is_applied_by_planner(tmp_path, monkeypatch):
     assert all(action["type"] == "build" for action in entry["actions"])
     assert captured_prompts[0]["achievement_context"][0]["id"] == "ReachedSpace"
     assert [goal["id"] for goal in captured_prompts[0]["available_goals"]] == [
+        "research_chain",
         "research_target",
         "barracks",
     ]

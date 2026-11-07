@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -46,6 +47,8 @@ def _plan_research_target(
     _catalog: Sequence[Mapping[str, Any]],
     config: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
+    if "research_chain_order" in config:
+        raise SkillPlanningError("superseded_by_research_chain")
     research = state.get("research")
     techs = research.get("techs") if isinstance(research, Mapping) else None
     if not isinstance(techs, list):
@@ -73,6 +76,78 @@ def _plan_research_target(
     if tech_id is None:
         raise SkillPlanningError("no_ready_tech")
     return [{"type": "set_research", "tech": tech_id}]
+
+
+def _plan_research_chain(
+    state: Mapping[str, Any],
+    _catalog: Sequence[Mapping[str, Any]],
+    config: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    order = config.get("research_chain_order")
+    if not isinstance(order, list) or any(
+        not isinstance(tech_id, str) or not tech_id for tech_id in order
+    ):
+        raise SkillPlanningError("research_chain_order_unknown")
+    if not order:
+        raise SkillPlanningError("research_chain_order_empty")
+
+    research = state.get("research")
+    if not isinstance(research, Mapping) or "active" not in research:
+        raise SkillPlanningError("research_status_unknown")
+    if research["active"] is not None:
+        raise SkillPlanningError("research_already_active")
+    techs = research.get("techs")
+    if not isinstance(techs, list):
+        raise SkillPlanningError("research_techs_unknown")
+    if any(
+        not isinstance(tech, Mapping)
+        or not isinstance(tech.get("id"), str)
+        or not tech["id"]
+        for tech in techs
+    ):
+        raise SkillPlanningError("research_techs_unknown")
+
+    for tech_id in order:
+        matches = [
+            tech for tech in techs if tech["id"] == tech_id
+        ]
+        if not matches:
+            continue
+        if len(matches) != 1:
+            raise SkillPlanningError("research_tech_data_ambiguous")
+        tech = matches[0]
+        complete = tech.get("complete")
+        if not isinstance(complete, bool):
+            raise SkillPlanningError("research_tech_status_unknown")
+        if complete:
+            continue
+        ready = tech.get("ready")
+        if not isinstance(ready, bool):
+            raise SkillPlanningError("research_tech_status_unknown")
+        if not ready:
+            continue
+
+        costs = tech.get("cost")
+        if not isinstance(costs, list):
+            raise SkillPlanningError("research_cost_unknown")
+        basic_only = True
+        for cost in costs:
+            if not isinstance(cost, Mapping) or not isinstance(cost.get("type"), str):
+                raise SkillPlanningError("research_cost_unknown")
+            required, current = cost.get("required"), cost.get("current")
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                for value in (required, current)
+            ):
+                raise SkillPlanningError("research_cost_unknown")
+            if cost["type"].casefold() != "basic":
+                basic_only = False
+                break
+        if basic_only:
+            return [{"type": "set_research", "tech": tech_id}]
+    raise SkillPlanningError("no_basic_ready_tech")
 
 
 def barracks_done(state: Mapping[str, Any]) -> bool | None:
@@ -133,12 +208,21 @@ def registered_goal_ids() -> list[str]:
 
 register_goal(
     Goal(
+        id="research_chain",
+        description="Select the next configured ready technology using basic research",
+        is_done=lambda _state: False,
+        plan=_plan_research_chain,
+    ),
+    rank=0,
+)
+register_goal(
+    Goal(
         id="research_target",
         description="Select the highest-priority ready incomplete technology",
         is_done=_research_target_done,
         plan=_plan_research_target,
     ),
-    rank=0,
+    rank=1,
 )
 register_goal(
     Goal(
