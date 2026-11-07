@@ -1,0 +1,11 @@
+# Dig and early construction investigation
+- `dig_corridor(state, x1, y1, x2, y2)` returns one `{"type":"dig","x":...,"y":...}` per `#` on its inclusive horizontal-then-vertical path; no per-turn cap (`agent/skills.py:1754-1778`).
+- `barracks` calls `build_barracks`; default `barracks_bed_count` is 4 (`agent/planner.py:182-203,244-248`; `agent/config.json:10`).
+- That planner computes interior width as `max(bed_width * bed_count, ceil(12 / bed_height))` and area as width × height (`agent/skills.py:1496-1498`).
+- Local catalog confirms `Bed` is 2×2, `Door` 1×2, `Tile` 1×1; thus default Barracks needs an 8×2 (16-cell) interior.
+- `no_valid_placement` means no candidate passed `_find_barracks_placement` (`agent/skills.py:1503-1513`).
+- The interior must be clear `.GV`; the surrounding perimeter is required except two door cells. Other perimeter cells must be `.GV` or existing `Tile` (`F`); `#`, `X`, `L`, and unrelated `F` reject the candidate (`agent/skills.py:1676-1723`; `agent/maputils.py:9,127-135`).
+- Therefore a ~20-cell hollow by itself does not guarantee placement: the shaped 8×2 interior, perimeter, door opening, and map bounds must all fit. Exact colony map geometry was not established from the request.
+- `planner.py` registers `research_chain`, `research_target`, and `barracks`; none calls `dig_corridor` or `build_research_area` (search: no references).
+- `build_research_area(state, catalog, research_center_id)` places one catalog building on a clear supported footprint (`agent/skills.py:1737-1751`).
+- Minimum proposal: add `research_center_setup`; use map-aware dig planning to clear a supported `ResearchCenter` footprint, then build catalog ID `ResearchCenter` on a later state-confirmed step
