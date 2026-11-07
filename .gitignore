@@ -23,3 +23,7 @@ __pycache__/
 .pytest_cache/
 logs/*.jsonl
 decompiled/
+
+logs/
+out.txt
+skills_part.txt
