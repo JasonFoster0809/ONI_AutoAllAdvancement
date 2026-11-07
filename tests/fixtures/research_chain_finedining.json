@@ -1,5 +1,8 @@
 {
   "cycle": 6,
+  "building_list": [
+    {"id": "ResearchCenter", "state": "built"}
+  ],
   "research": {
     "active": null,
     "techs": [

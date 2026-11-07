@@ -83,6 +83,21 @@ def _plan_research_chain(
     _catalog: Sequence[Mapping[str, Any]],
     config: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
+    buildings = state.get("building_list")
+    if not isinstance(buildings, list) or any(
+        not isinstance(building, Mapping)
+        or "id" not in building
+        or "state" not in building
+        for building in buildings
+    ):
+        raise SkillPlanningError("research_building_list_unknown")
+    if not any(
+        building.get("id") == "ResearchCenter"
+        and building.get("state") == "built"
+        for building in buildings
+    ):
+        raise SkillPlanningError("no_research_center")
+
     order = config.get("research_chain_order")
     if not isinstance(order, list) or any(
         not isinstance(tech_id, str) or not tech_id for tech_id in order

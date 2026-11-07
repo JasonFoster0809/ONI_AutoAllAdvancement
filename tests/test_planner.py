@@ -51,6 +51,9 @@ def test_research_goal_has_priority_over_barracks():
 
 def test_research_chain_selects_first_configured_ready_basic_tech():
     state = load_fixture("research_chain_finedining.json")
+    state["building_list"] = [
+        {"id": "ResearchCenter", "state": "built"}
+    ]
 
     step = next_step(
         state,
@@ -63,6 +66,76 @@ def test_research_chain_selects_first_configured_ready_basic_tech():
     assert step["goal_id"] == "research_chain"
     assert step["actions"] == [{"type": "set_research", "tech": "FineDining"}]
     assert set(step["actions"][0]) == {"type", "tech"}
+
+
+def test_research_chain_without_built_center_skips_and_planner_checks_barracks():
+    state = load_fixture("goal_barracks_unbuilt.json")
+    state["research"] = load_fixture("research_chain_finedining.json")["research"]
+    state["research"]["active"] = None
+
+    step = next_step(
+        state,
+        load_catalog(),
+        RESEARCH_CHAIN_CONFIG,
+        {},
+    )
+
+    assert step["goal_id"] == "barracks"
+    assert any(
+        item["goal_id"] == "research_chain"
+        and item["reason"] == "no_research_center"
+        for item in step["skipped"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("building_list", "expected_reason"),
+    [
+        ([], "no_research_center"),
+        (
+            [{"id": "ResearchCenter", "state": "under_construction"}],
+            "no_research_center",
+        ),
+    ],
+)
+def test_research_chain_requires_built_research_center(
+    building_list, expected_reason
+):
+    state = load_fixture("research_chain_finedining.json")
+    state["building_list"] = building_list
+
+    step = next_step(
+        state,
+        load_catalog(),
+        RESEARCH_CHAIN_CONFIG,
+        {},
+        enabled_goals=["research_chain"],
+    )
+
+    assert step["goal_id"] == "no_goal"
+    assert {
+        "goal_id": "research_chain",
+        "reason": expected_reason,
+    } in step["skipped"]
+
+
+def test_research_chain_missing_building_list_is_unknown():
+    state = load_fixture("research_chain_finedining.json")
+    del state["building_list"]
+
+    step = next_step(
+        state,
+        load_catalog(),
+        RESEARCH_CHAIN_CONFIG,
+        {},
+        enabled_goals=["research_chain"],
+    )
+
+    assert step["goal_id"] == "no_goal"
+    assert {
+        "goal_id": "research_chain",
+        "reason": "research_building_list_unknown",
+    } in step["skipped"]
 
 
 def test_research_chain_order_is_read_from_agent_config():
